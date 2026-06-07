@@ -1,0 +1,45 @@
+name: Build & Deploy HPE Recipe Detection
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Build Backend
+        working-directory: backend
+        run: mvn clean package -DskipTests
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install & Build Frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Build Docker Image
+        run: docker build -t hpe-recipe-detection:${{ github.sha }} .
+
+      - name: Upload Backend Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jar
+          path: backend/target/recipe-detection-*.jar

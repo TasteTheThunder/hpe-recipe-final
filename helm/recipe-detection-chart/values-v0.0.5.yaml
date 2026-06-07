@@ -1,0 +1,12 @@
+recipeData:
+  chartVersion: 0.0.5
+  recipes:
+  - version: 1.4.2
+    description: patch release
+    components:
+      spark: 1.3.2
+      kafka: 1.4.1
+      airflow: 1.6.2
+      hbase: 1.7.9
+    upgradePaths: [
+      ]

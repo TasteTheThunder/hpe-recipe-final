@@ -1,0 +1,33 @@
+recipeData:
+  chartVersion: "0.0.4"
+
+  recipes:
+    - version: "0.9.0"
+      description: "Initial beta release with basic analytics components"
+      components:
+        spark: "3.3.0"
+        kafka: "3.4.0"
+        airflow: "2.5.0"
+        hbase: "2.5.0"
+      upgradePaths: []
+
+    - version: "0.9.1"
+      description: "Bug fixes and stability improvements"
+      components:
+        spark: "3.3.1"
+        kafka: "3.4.1"
+        airflow: "2.5.1"
+        hbase: "2.5.1"
+      upgradePaths:
+        - "0.9.0"
+
+    - version: "1.0.0"
+      description: "First stable release with improved performance"
+      components:
+        spark: "3.4.0"
+        kafka: "3.5.0"
+        airflow: "2.6.0"
+        hbase: "2.6.0"
+      upgradePaths:
+        - "0.9.1"
+        - "0.9.0"

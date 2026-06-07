@@ -1,0 +1,39 @@
+server:
+  port: 8081
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: recipe-detection-api
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+gitops:
+  repo-url: https://github.com/NaomiiAP/hpe-recipe-final.git
+  local-path: ${java.io.tmpdir}/hpe-recipe-gitops
+  branch: main
+  username: ${GIT_USERNAME:NaomiiAP}
+  token: ${GIT_TOKEN:}
+  values-dir: helm/recipe-detection-chart
+
+jenkins:
+  url: ${JENKINS_URL:http://localhost:8080}
+  job: ${JENKINS_JOB:hpe-recipe-final}
+  username: ${JENKINS_USER:thatoneuke}
+  token: ${JENKINS_TOKEN:}
+kubernetes:
+
+  clusters:
+    dev:
+      context: dev
+    prod:
+      context: prod
+    qa:
+      context: qa
+    integration:
+      context: integration

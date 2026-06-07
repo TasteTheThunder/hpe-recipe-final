@@ -1,0 +1,53 @@
+# Java
+*.class
+*.log
+*.ctxt
+.mtj.tmp/
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# Node
+node_modules/
+dist/
+build/
+.npm
+.eslintcache
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Helm
+helm/**/*.tgz
+
+
+# Local secrets (copy from setup-env.example.ps1)
+scripts/setup-env.ps1
+
+#custom 
+README_GITHUB_SETUP.md
+SETUP.md

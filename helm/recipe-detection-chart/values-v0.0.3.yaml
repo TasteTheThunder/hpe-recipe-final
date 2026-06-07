@@ -1,0 +1,23 @@
+recipeData:
+  chartVersion: 0.0.3
+  recipes:
+  - version: 1.4.1
+    description: HPE Ezmeral Runtime 1.4.1
+    components:
+      hbase: 2.5.5
+      airflow: 2.6.3
+      kafka: 3.4.0
+      spark: 3.3.1
+    upgradePaths:
+    - 1.4.0
+    - 1.3.2
+  - version: 1.5.0
+    description: HPE Ezmeral Runtime 1.5.0
+    components:
+      hbase: 2.6.0
+      airflow: 2.7.0
+      kafka: 3.5.0
+      spark: 3.4.0
+    upgradePaths:
+    - 1.4.1
+    - 1.4.0
