@@ -23,7 +23,11 @@ pipeline {
         stage('Validate Cluster Access') {
             steps {
                 script {
-                    sh "kubectl --context=${params.CLUSTER} get nodes"
+                    if (isUnix()) {
+                        sh "kubectl --context=${params.CLUSTER} get nodes"
+                    } else {
+                        bat "kubectl --context=${params.CLUSTER} get nodes"
+                    }
                     echo "Using cluster: ${params.CLUSTER}"
                 }
             }
@@ -53,24 +57,40 @@ pipeline {
                     def valuesArg = env.HAS_VERSION_VALUES == 'true'
                         ? "-f ${env.VALUES_FILE}" : ""
 
-                    def releaseExists = sh(
-                        script: "${HELM_CMD} --kube-context ${params.CLUSTER} status ${RELEASE_NAME} --namespace ${KUBE_NAMESPACE} 2>/dev/null",
-                        returnStatus: true
-                    ) == 0
+                    def releaseExists
+                    if (isUnix()) {
+                        releaseExists = sh(
+                            script: "${HELM_CMD} --kube-context ${params.CLUSTER} status ${RELEASE_NAME} --namespace ${KUBE_NAMESPACE} 2>/dev/null",
+                            returnStatus: true
+                        ) == 0
+                    } else {
+                        releaseExists = bat(
+                            script: "@echo off\r\n${HELM_CMD} --kube-context ${params.CLUSTER} status ${RELEASE_NAME} --namespace ${KUBE_NAMESPACE} >nul 2>&1",
+                            returnStatus: true
+                        ) == 0
+                    }
 
                     if (releaseExists) {
-                        sh """
-                            ${HELM_CMD} --kube-context ${params.CLUSTER} upgrade ${RELEASE_NAME} ${CHART_DIR} \
-                                --namespace ${KUBE_NAMESPACE} \
-                                ${valuesArg}
-                        """
+                        if (isUnix()) {
+                            sh """
+                                ${HELM_CMD} --kube-context ${params.CLUSTER} upgrade ${RELEASE_NAME} ${CHART_DIR} \\
+                                    --namespace ${KUBE_NAMESPACE} \\
+                                    ${valuesArg}
+                            """
+                        } else {
+                            bat "${HELM_CMD} --kube-context ${params.CLUSTER} upgrade ${RELEASE_NAME} ${CHART_DIR} --namespace ${KUBE_NAMESPACE} ${valuesArg}"
+                        }
                         echo "Upgraded Helm release: ${RELEASE_NAME}"
                     } else {
-                        sh """
-                            ${HELM_CMD} --kube-context ${params.CLUSTER} install ${RELEASE_NAME} ${CHART_DIR} \
-                                --namespace ${KUBE_NAMESPACE} \
-                                ${valuesArg}
-                        """
+                        if (isUnix()) {
+                            sh """
+                                ${HELM_CMD} --kube-context ${params.CLUSTER} install ${RELEASE_NAME} ${CHART_DIR} \\
+                                    --namespace ${KUBE_NAMESPACE} \\
+                                    ${valuesArg}
+                            """
+                        } else {
+                            bat "${HELM_CMD} --kube-context ${params.CLUSTER} install ${RELEASE_NAME} ${CHART_DIR} --namespace ${KUBE_NAMESPACE} ${valuesArg}"
+                        }
                         echo "Installed new Helm release: ${RELEASE_NAME}"
                     }
                 }
@@ -80,8 +100,13 @@ pipeline {
         stage('Verify ConfigMap') {
             steps {
                 script {
-                    sh "${HELM_CMD} --kube-context ${params.CLUSTER} list --namespace ${KUBE_NAMESPACE}"
-                    sh "kubectl --context=${params.CLUSTER} get configmaps --namespace ${KUBE_NAMESPACE} -l app.kubernetes.io/instance=${RELEASE_NAME}"
+                    if (isUnix()) {
+                        sh "${HELM_CMD} --kube-context ${params.CLUSTER} list --namespace ${KUBE_NAMESPACE}"
+                        sh "kubectl --context=${params.CLUSTER} get configmaps --namespace ${KUBE_NAMESPACE} -l app.kubernetes.io/instance=${RELEASE_NAME}"
+                    } else {
+                        bat "${HELM_CMD} --kube-context ${params.CLUSTER} list --namespace ${KUBE_NAMESPACE}"
+                        bat "kubectl --context=${params.CLUSTER} get configmaps --namespace ${KUBE_NAMESPACE} -l app.kubernetes.io/instance=${RELEASE_NAME}"
+                    }
                 }
             }
         }
@@ -89,11 +114,17 @@ pipeline {
         stage('Update Backend Status') {
             steps {
                 script {
-                    sh """
-                    curl -s -X PUT ${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER} \
-                    -H "Content-Type: application/json" \
-                    -d '{"status":"deployed"}'
-                    """
+                    if (isUnix()) {
+                        sh """
+                            curl -s -X PUT ${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER} \\
+                            -H "Content-Type: application/json" \\
+                            -d '{"status":"deployed"}'
+                        """
+                    } else {
+                        bat """
+                            curl -s -X PUT "${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER}" -H "Content-Type: application/json" -d "{\\"status\\":\\"deployed\\"}"
+                        """
+                    }
                 }
             }
         }
@@ -105,11 +136,19 @@ pipeline {
         }
         failure {
             script {
-                sh """
-                curl -s -X PUT ${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER} \
-                -H "Content-Type: application/json" \
-                -d '{"status":"failed"}' 2>/dev/null
-                """
+                if (env.CHART_VERSION) {
+                    if (isUnix()) {
+                        sh """
+                            curl -s -X PUT ${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER} \\
+                            -H "Content-Type: application/json" \\
+                            -d '{"status":"failed"}' 2>/dev/null
+                        """
+                    } else {
+                        bat """
+                            curl -s -X PUT "${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER}" -H "Content-Type: application/json" -d "{\\"status\\":\\"failed\\"}" >nul 2>&1
+                        """
+                    }
+                }
             }
         }
         always {
