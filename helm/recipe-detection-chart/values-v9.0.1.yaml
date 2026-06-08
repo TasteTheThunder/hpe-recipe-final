@@ -2,44 +2,38 @@ recipeData:
   chartVersion: 9.0.1
   catalog_name: HPE Analytics
   catalog_description: Enterprise Analytics
-  release_date: '2026-06-08'
   catalog_status: GA
   maintainer: HPE Devops team
   recipes:
-  - version: 1.4.1
-    description: Major release with platform enhancements
+  - version: 1.4.0
+    description: Major feature and stability update
     release_date: '2026-06-04'
     status: GA
-    release_notes: Introduced new analytics capabilities and performance improvements
+    release_notes: Upgraded all core platform services to latest supported versions
     components:
       analytics-engine:
-        version: 1.3.1
+        version: 1.2.1
         release_date: '2026-06-03'
         upgrade_from:
-        - 1.2.1
+        - 1.1.1
+        upgrade_to:
+        - 1.3.1
+      postgres-db:
+        version: 1.2.3
+        release_date: '2026-06-03'
+        upgrade_from:
+        - 1.1.3
+        upgrade_to:
+        - 1.4.1
+      stream-processor:
+        version: 1.2.2
+        release_date: '2026-06-03'
+        upgrade_from:
+        - 1.1.2
         upgrade_to:
         - 1.3.2
-      postgres-db:
-        version: 1.4.1
-        release_date: '2026-06-03'
-        upgrade_from:
-        - 1.2.3
-        upgrade_to:
         - 1.4.2
-      stream-processor:
-        version: 1.3.2
-        release_date: '2026-06-03'
-        upgrade_from:
-        - 1.2.2
-        upgrade_to:
-        - 1.5.2
-        - 1.6.2
-      kafka:
-        version: 3.0.7
-        release_date: '2026-06-08'
-        upgrade_from:
-        - 3.0.7
-        upgrade_to:
-        - 4.0.0
+    upgrade_to:
+    - 1.4.1
     upgrade_from:
     - 1.3.9
