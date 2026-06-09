@@ -2,9 +2,9 @@ pipeline {
     agent any
 
     parameters {
-        choice(name: 'ALLOW_DEPLOY', choices: ['no', 'yes'], description: 'Must be yes to run Helm deploy/rollback. SCM builds default to no.')
-        choice(name: 'CLUSTER', choices: ['dev', 'prod', 'qa', 'integration'], description: 'Target cluster for deploy/rollback')
-        choice(name: 'ACTION', choices: ['deploy', 'rollback', 'helm-rollback'], description: 'deploy = install/upgrade, rollback = redeploy older values file, helm-rollback = undo last Helm revision')
+        choice(name: 'ALLOW_DEPLOY', choices: ['no', 'yes'], description: 'Must be yes to run Helm deploy. SCM builds default to no.')
+        choice(name: 'CLUSTER', choices: ['dev', 'prod', 'qa', 'integration'], description: 'Target cluster for deploy')
+        choice(name: 'ACTION', choices: ['deploy'], description: 'deploy = install/upgrade')
         string(name: 'CHART_VERSION', defaultValue: '', description: 'Optional chart version override')
         string(name: 'VALUES_FILE', defaultValue: '', description: 'Optional values file name override (e.g. prod-values.yaml)')
     }
@@ -91,7 +91,7 @@ pipeline {
 
         stage('Validate Target Cluster') {
             when {
-                expression { params.ALLOW_DEPLOY == 'yes' && (params.ACTION == 'deploy' || params.ACTION == 'rollback') }
+                expression { params.ALLOW_DEPLOY == 'yes' && params.ACTION == 'deploy' }
             }
             steps {
                 script {
@@ -114,25 +114,9 @@ pipeline {
             }
         }
 
-        stage('Helm Revision Rollback') {
-            when {
-                expression { params.ALLOW_DEPLOY == 'yes' && params.ACTION == 'helm-rollback' }
-            }
-            steps {
-                script {
-                    if (isUnix()) {
-                        sh "${HELM_CMD} --kube-context ${params.CLUSTER} rollback ${RELEASE_NAME} --namespace ${KUBE_NAMESPACE}"
-                    } else {
-                        bat "${HELM_CMD} --kube-context ${params.CLUSTER} rollback ${RELEASE_NAME} --namespace ${KUBE_NAMESPACE}"
-                    }
-                    echo "Rolled back Helm revision for: ${RELEASE_NAME}"
-                }
-            }
-        }
-
         stage('Deploy Helm (Config Only)') {
             when {
-                expression { params.ALLOW_DEPLOY == 'yes' && (params.ACTION == 'deploy' || params.ACTION == 'rollback') }
+                expression { params.ALLOW_DEPLOY == 'yes' && params.ACTION == 'deploy' }
             }
             steps {
                 script {
@@ -180,7 +164,7 @@ pipeline {
 
         stage('Verify ConfigMap') {
             when {
-                expression { params.ALLOW_DEPLOY == 'yes' && (params.ACTION == 'deploy' || params.ACTION == 'rollback') }
+                expression { params.ALLOW_DEPLOY == 'yes' && params.ACTION == 'deploy' }
             }
             steps {
                 script {

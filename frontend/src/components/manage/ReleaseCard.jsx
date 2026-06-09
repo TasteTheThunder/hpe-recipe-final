@@ -10,7 +10,6 @@ import {
 } from '../../ui/styles';
 import EditRecipeInline from './EditRecipeInline';
 import DeployPreviewModal from './DeployPreviewModal';
-import RollbackModal from './RollbackModal';
 import { normalizeRecipeDescription, getRecipeUpgradeFrom, getRecipeUpgradeTo } from './utils';
 
 const API_BASE = '/api';
@@ -23,7 +22,6 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
   const [editingRecipe, setEditingRecipe] = useState(null);
   const [editingCatalog, setEditingCatalog] = useState(false);
   const [showDeployPreview, setShowDeployPreview] = useState(false);
-  const [showRollback, setShowRollback] = useState(false);
   const [catalogDraft, setCatalogDraft] = useState({
     releaseName: '',
     catalogName: '',
@@ -225,12 +223,6 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
                 ...btnPrimary, padding: '6px 14px', fontSize: 12,
               }}>Deploy</button>
             </>
-          )}
-          {(displayStatus === 'deployed' || displayStatus === 'failed') && (
-            <button onClick={() => setShowRollback(true)} style={{
-              ...btnSecondary, padding: '6px 14px', fontSize: 12,
-              color: T.yellow, borderColor: `${T.yellow}55`,
-            }}>Rollback</button>
           )}
           {displayStatus === 'deploying' && (
             <span style={{
@@ -493,16 +485,6 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
           cluster={cluster}
           onClose={() => setShowDeployPreview(false)}
           onConfirm={onDeploy}
-        />
-      )}
-
-      {showRollback && (
-        <RollbackModal
-          version={release.version}
-          cluster={cluster}
-          onClose={() => setShowRollback(false)}
-          onRollback={onRefresh}
-          onNotify={onNotify}
         />
       )}
     </div>

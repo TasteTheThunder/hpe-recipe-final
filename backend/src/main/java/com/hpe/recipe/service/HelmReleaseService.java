@@ -943,21 +943,6 @@ public class HelmReleaseService {
         return Optional.of(deployed.get(deployed.size() - 1).getVersion());
     }
 
-    public Optional<String> getPreviousDeployedVersion(String cluster, String currentVersion) {
-        List<String> versions = getDeployedHelmReleases(cluster).stream()
-                .map(HelmRelease::getVersion)
-                .collect(Collectors.toList());
-
-        int idx = versions.indexOf(currentVersion);
-        if (idx > 0) {
-            return Optional.of(versions.get(idx - 1));
-        }
-        if (idx < 0 && versions.size() >= 2) {
-            return Optional.of(versions.get(versions.size() - 2));
-        }
-        return Optional.empty();
-    }
-
     public Map<String, Object> getDeployPreview(String cluster, String version, String baseline) {
         HelmRelease proposed = getHelmRelease(cluster, version);
         if (proposed == null) {
@@ -986,31 +971,6 @@ public class HelmReleaseService {
         result.put("summary", hasRecipeDiffs(diff)
                 ? "Changes detected versus currently deployed v" + baselineVersion + "."
                 : "No recipe differences versus currently deployed v" + baselineVersion + ".");
-        return result;
-    }
-
-    public Map<String, Object> getRollbackOptions(String cluster, String version) {
-        List<HelmRelease> deployed = getDeployedHelmReleases(cluster);
-        List<Map<String, String>> available = new ArrayList<>();
-
-        for (HelmRelease release : deployed) {
-            Map<String, String> entry = new LinkedHashMap<>();
-            entry.put("version", release.getVersion());
-            entry.put("releaseName", release.getReleaseName() != null ? release.getReleaseName() : "");
-            available.add(entry);
-        }
-
-        Collections.reverse(available);
-
-        String previousVersion = getPreviousDeployedVersion(cluster, version).orElse("");
-        boolean canRevisionRollback = getDeployedFromCluster(cluster, version) != null;
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("cluster", cluster);
-        result.put("version", version);
-        result.put("previousVersion", previousVersion);
-        result.put("availableVersions", available);
-        result.put("canHelmRevisionRollback", canRevisionRollback);
         return result;
     }
 
