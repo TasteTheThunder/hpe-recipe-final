@@ -11,4 +11,4 @@ keywords:
   - detection
   - hpe
 annotations:
-recipe-detection/values-file: values-v9.0.5.yaml
+  recipe-detection/values-file: values-v9.0.5.yaml

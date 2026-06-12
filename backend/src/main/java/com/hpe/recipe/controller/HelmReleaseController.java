@@ -160,16 +160,26 @@ public class HelmReleaseController {
             @PathVariable String version,
             @RequestParam String cluster) {
 
-        HelmRelease release = helmReleaseService.getHelmRelease(cluster, version);
+        HelmRelease release = helmReleaseService.resolveReleaseForDeploy(cluster, version);
 
         if (release == null) return ResponseEntity.notFound().build();
+
+        helmReleaseService.ensureDraftOnCluster(cluster, release);
+        release = helmReleaseService.getHelmRelease(cluster, version);
 
         if (release.getRecipes() == null || release.getRecipes().isEmpty()) {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "Cannot deploy release with no recipes"));
         }
 
+        try {
+            helmReleaseService.validatePromotionDeploy(cluster, version);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+
         release.setCluster(cluster);
+        release.setReleaseName(HelmReleaseService.helmReleaseNameForCluster(cluster));
         release.setStatus("deploying");
         helmReleaseService.updateHelmRelease(cluster, version, release);
 
@@ -312,6 +322,11 @@ public class HelmReleaseController {
             return ResponseEntity.badRequest().body(preview);
         }
         return ResponseEntity.ok(preview);
+    }
+
+    @GetMapping("/{version}/promotion-options")
+    public ResponseEntity<Map<String, Object>> promotionOptions(@PathVariable String version) {
+        return ResponseEntity.ok(helmReleaseService.getPromotionOptions(version));
     }
 
     private void triggerJenkins(String cluster, String action, String chartVersion, String valuesFile) {

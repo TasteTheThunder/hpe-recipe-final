@@ -39,7 +39,7 @@ export default function DeployPreviewModal({ version, cluster, onClose, onConfir
     }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{
         background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 16,
-        padding: 28, width: 600, maxHeight: '85vh', overflowY: 'auto',
+        padding: 28, width: 760, maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto',
         boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -55,7 +55,7 @@ export default function DeployPreviewModal({ version, cluster, onClose, onConfir
           }}>x</button>
         </div>
 
-        <ReleaseDiffPanel diff={diff} loading={loading} />
+        <ReleaseDiffPanel diff={diff} loading={loading} version={version} cluster={cluster} />
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
           <button onClick={onClose} style={btnSecondary} disabled={confirming}>Cancel</button>
@@ -64,7 +64,7 @@ export default function DeployPreviewModal({ version, cluster, onClose, onConfir
             style={{ ...btnPrimary, opacity: confirming || loading ? 0.7 : 1 }}
             disabled={confirming || loading || diff?.error}
           >
-            {confirming ? 'Deploying...' : 'Confirm Deploy'}
+            {confirming ? 'Deploying...' : cluster === 'dev' ? 'Confirm Deploy to DEV' : `Confirm Promote to ${cluster.toUpperCase()}`}
           </button>
         </div>
       </div>

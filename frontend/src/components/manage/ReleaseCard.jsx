@@ -22,6 +22,7 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
   const [editingRecipe, setEditingRecipe] = useState(null);
   const [editingCatalog, setEditingCatalog] = useState(false);
   const [showDeployPreview, setShowDeployPreview] = useState(false);
+  const [promotion, setPromotion] = useState(null);
   const [catalogDraft, setCatalogDraft] = useState({
     releaseName: '',
     catalogName: '',
@@ -46,6 +47,13 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
       fetchDetail();
     }
   }, [expanded, release.version, cluster]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/helm-releases/${release.version}/promotion-options`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setPromotion(data))
+      .catch(() => setPromotion(null));
+  }, [release.version, release.status]);
 
   const handleDeleteRelease = () => {
     if (!window.confirm(`Delete Helm release ${release.version}? This removes all its recipes.`)) return;
@@ -174,6 +182,21 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
     setShowDeployPreview(true);
   };
 
+  const deployTarget = promotion?.nextTarget
+    || (['pending', 'failed', 'push_failed'].includes(displayStatus) ? 'dev' : null);
+  const deployLabel = !deployTarget
+    ? 'Promoted'
+    : deployTarget === 'dev'
+      ? 'Deploy to DEV'
+      : `Promote to ${deployTarget.toUpperCase()}`;
+  const canPromote = promotion
+    ? Boolean(promotion.nextTarget)
+    : ['pending', 'failed', 'push_failed'].includes(displayStatus);
+  const pipeline = promotion?.pipeline || ['dev', 'qa', 'integration', 'prod'];
+  const deployedOn = promotion?.deployedOn || {};
+
+  const handleConfirmDeploy = (version) => onDeploy(version, deployTarget);
+
   return (
     <div style={{
       ...cardStyle,
@@ -203,6 +226,26 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
                 background: `${statusColor}18`, color: statusColor,
               }}>{displayStatus}</span>
             </div>
+            {promotion && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {pipeline.map((stage) => {
+                  const onStage = deployedOn[stage];
+                  return (
+                    <span
+                      key={`${release.version}-${stage}`}
+                      style={{
+                        padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                        background: onStage ? `${T.green}18` : T.bgSurface,
+                        color: onStage ? T.green : T.textMuted,
+                        border: `1px solid ${onStage ? T.green : T.border}44`,
+                      }}
+                    >
+                      {stage.toUpperCase()}{onStage ? ' ✓' : ''}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <span style={{
             marginLeft: 'auto', fontSize: 18, color: T.textMuted,
@@ -219,9 +262,17 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
               <button onClick={handleDeploy} style={{
                 ...btnSecondary, padding: '6px 14px', fontSize: 12,
               }}>Preview</button>
-              <button onClick={handleDeploy} style={{
-                ...btnPrimary, padding: '6px 14px', fontSize: 12,
-              }}>Deploy</button>
+              <button
+                onClick={handleDeploy}
+                style={{
+                  ...btnPrimary, padding: '6px 14px', fontSize: 12,
+                  opacity: canPromote ? 1 : 0.5,
+                }}
+                disabled={!canPromote}
+                title={canPromote ? deployLabel : 'Fully promoted through all clusters'}
+              >
+                {canPromote ? deployLabel : 'Promoted'}
+              </button>
             </>
           )}
           {displayStatus === 'deploying' && (
@@ -482,9 +533,9 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
       {showDeployPreview && (
         <DeployPreviewModal
           version={release.version}
-          cluster={cluster}
+          cluster={deployTarget}
           onClose={() => setShowDeployPreview(false)}
-          onConfirm={onDeploy}
+          onConfirm={handleConfirmDeploy}
         />
       )}
     </div>

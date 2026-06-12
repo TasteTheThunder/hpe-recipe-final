@@ -61,8 +61,9 @@ export default function ManagePage() {
 
   const refresh = () => refetch();
 
-  async function deployRelease(version) {
-    const response = await fetch(`${API_BASE}/helm-releases/${version}/deploy?cluster=${cluster}`, {
+  async function deployRelease(version, targetCluster) {
+    const deployCluster = targetCluster || cluster;
+    const response = await fetch(`${API_BASE}/helm-releases/${version}/deploy?cluster=${deployCluster}`, {
       method: 'POST',
     });
 
@@ -80,7 +81,7 @@ export default function ManagePage() {
       throw new Error(message);
     }
 
-    const message = payload.message || `Deploy triggered for ${version} on ${cluster.toUpperCase()}`;
+    const message = payload.message || `Deploy triggered for ${version} on ${deployCluster.toUpperCase()}`;
     notify(message);
     refresh();
     return payload;
@@ -125,7 +126,13 @@ export default function ManagePage() {
             <option value="integration">INTEGRATION</option>
           </select>
           <span style={{ display: 'flex', alignItems: 'center', fontSize: 12, color: T.textMuted, whiteSpace: 'nowrap' }}>
-            Cluster: {cluster.toUpperCase()}
+            Viewing: {cluster.toUpperCase()}
+          </span>
+          <span style={{
+            fontSize: 11, color: T.teal, padding: '4px 10px', borderRadius: 6,
+            background: `${T.teal}12`, border: `1px solid ${T.teal}33`, whiteSpace: 'nowrap',
+          }}>
+            Pipeline: DEV → QA → INTEGRATION → PROD
           </span>
           <Link to={`/?cluster=${cluster}`} style={{
             ...btnSecondary, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6,

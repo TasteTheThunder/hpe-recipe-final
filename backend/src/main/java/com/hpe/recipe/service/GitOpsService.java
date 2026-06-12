@@ -45,47 +45,47 @@ public class GitOpsService {
      */
     public synchronized void generateAndPush(HelmRelease release) throws Exception {
 
-        System.out.println("🚀 Starting GitOps for version: " + release.getVersion());
+        System.out.println("Starting GitOps for version: " + release.getVersion());
 
         File repoDir = new File(localPath);
         Git git = getOrCloneRepo(repoDir);
 
         try {
-            System.out.println("📥 Pulling latest code...");
+            System.out.println("Pulling latest code...");
             git.pull()
                     .setCredentialsProvider(getCredentials())
                     .setRemoteBranchName(branch)
                     .call();
 
-            System.out.println("📄 Generating YAML...");
+            System.out.println("Generating YAML...");
             String valuesFileName = resolveValuesFileName(release);
             String valuesYaml = generateValuesYaml(release, valuesFileName);
             File valuesFile = new File(repoDir, valuesDir + "/" + valuesFileName);
             writeFile(valuesFile, valuesYaml);
 
-            System.out.println("📝 Updating Chart.yaml...");
+            System.out.println("Updating Chart.yaml...");
             File chartFile = new File(repoDir, valuesDir + "/Chart.yaml");
             updateChartMetadata(chartFile, release.getVersion(), valuesFileName);
 
-            System.out.println("➕ Adding files to git...");
+            System.out.println("Adding files to git...");
             git.add().addFilepattern(valuesDir + "/" + valuesFileName).call();
             git.add().addFilepattern(valuesDir + "/Chart.yaml").call();
 
-            System.out.println("💾 Committing changes...");
+            System.out.println("Committing changes...");
             git.commit()
                     .setMessage("Release v" + release.getVersion())
                     .setAuthor("Recipe Detection", "recipe-detection@hpe.com")
                     .call();
 
-            System.out.println("📤 Pushing to GitHub...");
+            System.out.println("Pushing to GitHub...");
             git.push()
                     .setCredentialsProvider(getCredentials())
                     .call();
 
-            System.out.println("✅ PUSH SUCCESS");
+            System.out.println("PUSH SUCCESS");
 
         } catch (Exception e) {
-            System.out.println("❌ GIT ERROR: " + e.getMessage());
+            System.out.println("GIT ERROR: " + e.getMessage());
             e.printStackTrace();
             throw e;
         } finally {

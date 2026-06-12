@@ -8,6 +8,7 @@ import com.hpe.recipe.model.Recipe;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.StatusDetails;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ public class HelmReleaseService {
     private static final String LABEL_APP_VERSION = "app.kubernetes.io/version";
     private static final String ANNOTATION_RELEASE_NAME = "meta.helm.sh/release-name";
     private static final String RECIPE_DATA_KEY = "recipe-data.json";
+    public static final List<String> PROMOTION_PIPELINE = List.of("dev", "qa", "integration", "prod");
 
     private final Map<String, KubernetesClient> clients;
     private final Map<String, Map<String, HelmRelease>> draftReleasesByCluster = new ConcurrentHashMap<>();
@@ -46,11 +48,16 @@ public class HelmReleaseService {
     }
 
     private List<ConfigMap> fetchRecipeConfigMaps(String cluster) {
-        return getClient(cluster).configMaps()
-                .inNamespace("default")
-                .withLabel(LABEL_APP_NAME, "recipe-detection")
-                .list()
-                .getItems();
+        try {
+            return getClient(cluster).configMaps()
+                    .inNamespace("default")
+                    .withLabel(LABEL_APP_NAME, "recipe-detection")
+                    .list()
+                    .getItems();
+        } catch (KubernetesClientException e) {
+            log.warn("Unable to reach Kubernetes cluster '{}': {}", cluster, e.getMessage());
+            return List.of();
+        }
     }
 
     private boolean isHelmManaged(ConfigMap cm) {
@@ -263,41 +270,165 @@ public class HelmReleaseService {
         }
     }
 
-    // ================= CRUD =================
+    // ================= PROMOTION PIPELINE =================
 
-    public List<HelmRelease> getAllHelmReleases(String cluster) {
+    public static String helmReleaseNameForCluster(String cluster) {
+        return "recipe-" + cluster;
+    }
 
-        List<ConfigMap> cms = fetchRecipeConfigMaps(cluster);
+    public Optional<HelmRelease> getActiveDeployedCatalog(String cluster) {
+        String expectedReleaseName = helmReleaseNameForCluster(cluster);
+        HelmRelease fromExpected = null;
+        HelmRelease legacyFallback = null;
 
-        // One release per chart version in API responses.
-        // If both draft and Helm configmaps exist, prefer draft (pending/deploying state).
-        Map<String, ConfigMap> selectedByVersion = new LinkedHashMap<>();
-        for (ConfigMap cm : cms) {
+        for (ConfigMap cm : fetchRecipeConfigMaps(cluster)) {
+            if (!isHelmManaged(cm)) {
+                continue;
+            }
             HelmRelease parsed = parseConfigMap(cluster, cm);
             if (parsed == null) {
                 continue;
             }
 
-            ConfigMap existing = selectedByVersion.get(parsed.getVersion());
-            if (existing == null) {
-                selectedByVersion.put(parsed.getVersion(), cm);
-                continue;
+            Map<String, String> annotations = cm.getMetadata() != null ? cm.getMetadata().getAnnotations() : null;
+            String releaseName = annotations != null ? annotations.get(ANNOTATION_RELEASE_NAME) : null;
+
+            if (expectedReleaseName.equals(releaseName)) {
+                fromExpected = parsed;
+                break;
             }
 
-            if (isHelmManaged(existing) && !isHelmManaged(cm)) {
-                selectedByVersion.put(parsed.getVersion(), cm);
+            if (legacyFallback == null || compareVersions(parsed.getVersion(), legacyFallback.getVersion()) > 0) {
+                legacyFallback = parsed;
             }
         }
 
-        Map<String, HelmRelease> merged = selectedByVersion.values().stream()
-                .map(cm -> parseConfigMap(cluster, cm))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toMap(
-                        HelmRelease::getVersion,
-                        this::copyRelease,
-                        (a, b) -> a,
-                        LinkedHashMap::new
-                ));
+        HelmRelease active = fromExpected != null ? fromExpected : legacyFallback;
+        if (active == null) {
+            return Optional.empty();
+        }
+
+        HelmRelease copy = copyRelease(active);
+        copy.setCluster(cluster);
+        copy.setStatus("deployed");
+        copy.setReleaseName(helmReleaseNameForCluster(cluster));
+        return Optional.of(copy);
+    }
+
+    public void validatePromotionDeploy(String targetCluster, String version) {
+        if (!PROMOTION_PIPELINE.contains(targetCluster)) {
+            throw new IllegalStateException("Unknown cluster: " + targetCluster);
+        }
+
+        int idx = PROMOTION_PIPELINE.indexOf(targetCluster);
+        if (idx == 0) {
+            return;
+        }
+
+        String requiredCluster = PROMOTION_PIPELINE.get(idx - 1);
+        if (getDeployedFromCluster(requiredCluster, version) == null) {
+            throw new IllegalStateException(
+                    "Version " + version + " must be deployed on " + requiredCluster.toUpperCase()
+                            + " before promoting to " + targetCluster.toUpperCase()
+                            + " (pipeline: dev → qa → integration → prod)");
+        }
+    }
+
+    public Optional<String> getNextPromotionTarget(String version) {
+        for (String cluster : PROMOTION_PIPELINE) {
+            if (getDeployedFromCluster(cluster, version) != null) {
+                continue;
+            }
+            try {
+                validatePromotionDeploy(cluster, version);
+                return Optional.of(cluster);
+            } catch (IllegalStateException e) {
+                return Optional.empty();
+            }
+        }
+        return Optional.empty();
+    }
+
+    public Map<String, Object> getPromotionOptions(String version) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("pipeline", PROMOTION_PIPELINE);
+
+        Map<String, Boolean> deployedOn = new LinkedHashMap<>();
+        Map<String, String> activeVersions = new LinkedHashMap<>();
+        for (String cluster : PROMOTION_PIPELINE) {
+            Optional<HelmRelease> active = getActiveDeployedCatalog(cluster);
+            activeVersions.put(cluster, active.map(HelmRelease::getVersion).orElse(""));
+            deployedOn.put(cluster, getDeployedFromCluster(cluster, version) != null);
+        }
+        result.put("deployedOn", deployedOn);
+        result.put("activeVersionOnCluster", activeVersions);
+
+        List<String> allowedTargets = new ArrayList<>();
+        for (String cluster : PROMOTION_PIPELINE) {
+            try {
+                validatePromotionDeploy(cluster, version);
+                allowedTargets.add(cluster);
+            } catch (IllegalStateException ignored) {
+                // not allowed yet
+            }
+        }
+        result.put("allowedTargets", allowedTargets);
+        getNextPromotionTarget(version).ifPresent(next -> result.put("nextTarget", next));
+        return result;
+    }
+
+    /**
+     * Resolves release content when promoting to a cluster that may not hold the draft
+     * (e.g. draft on dev, deploy target qa).
+     */
+    public HelmRelease resolveReleaseForDeploy(String targetCluster, String version) {
+        HelmRelease local = getHelmRelease(targetCluster, version);
+        if (local != null) {
+            return local;
+        }
+
+        for (String pipelineCluster : PROMOTION_PIPELINE) {
+            HelmRelease draft = getDraft(pipelineCluster, version);
+            if (draft != null) {
+                HelmRelease copy = copyRelease(draft);
+                copy.setCluster(targetCluster);
+                return copy;
+            }
+        }
+
+        int idx = PROMOTION_PIPELINE.indexOf(targetCluster);
+        if (idx > 0) {
+            for (int i = idx - 1; i >= 0; i--) {
+                HelmRelease deployed = getDeployedFromCluster(PROMOTION_PIPELINE.get(i), version);
+                if (deployed != null) {
+                    HelmRelease copy = copyRelease(deployed);
+                    copy.setCluster(targetCluster);
+                    return copy;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    public void ensureDraftOnCluster(String cluster, HelmRelease release) {
+        if (getDraft(cluster, release.getVersion()) == null) {
+            HelmRelease copy = copyRelease(release);
+            copy.setCluster(cluster);
+            if (copy.getStatus() == null || copy.getStatus().isBlank()) {
+                copy.setStatus("pending");
+            }
+            storeDraft(cluster, copy);
+        }
+    }
+
+    // ================= CRUD =================
+
+    public List<HelmRelease> getAllHelmReleases(String cluster) {
+        Map<String, HelmRelease> merged = new LinkedHashMap<>();
+
+        getActiveDeployedCatalog(cluster).ifPresent(active ->
+                merged.put(active.getVersion(), copyRelease(active)));
 
         draftsForCluster(cluster).forEach((version, draft) -> merged.put(version, copyRelease(draft)));
 
@@ -918,33 +1049,17 @@ public class HelmReleaseService {
     }
 
     public List<HelmRelease> getDeployedHelmReleases(String cluster) {
-        List<HelmRelease> result = new ArrayList<>();
-        for (ConfigMap cm : fetchRecipeConfigMaps(cluster)) {
-            if (!isHelmManaged(cm)) {
-                continue;
-            }
-            HelmRelease parsed = parseConfigMap(cluster, cm);
-            if (parsed != null) {
-                HelmRelease copy = copyRelease(parsed);
-                copy.setCluster(cluster);
-                copy.setStatus("deployed");
-                result.add(copy);
-            }
-        }
-        result.sort((a, b) -> compareVersions(a.getVersion(), b.getVersion()));
-        return result;
+        return getActiveDeployedCatalog(cluster)
+                .map(active -> new ArrayList<>(List.of(active)))
+                .orElseGet(ArrayList::new);
     }
 
     public Optional<String> getLatestDeployedVersion(String cluster) {
-        List<HelmRelease> deployed = getDeployedHelmReleases(cluster);
-        if (deployed.isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(deployed.get(deployed.size() - 1).getVersion());
+        return getActiveDeployedCatalog(cluster).map(HelmRelease::getVersion);
     }
 
     public Map<String, Object> getDeployPreview(String cluster, String version, String baseline) {
-        HelmRelease proposed = getHelmRelease(cluster, version);
+        HelmRelease proposed = resolveReleaseForDeploy(cluster, version);
         if (proposed == null) {
             return Map.of("error", "Release not found");
         }
@@ -991,12 +1106,9 @@ public class HelmReleaseService {
             return version;
         }
 
-        Optional<String> latest = getLatestDeployedVersion(cluster);
-        if (latest.isPresent() && !latest.get().equals(version)) {
-            return latest.get();
-        }
-
-        return null;
+        return getLatestDeployedVersion(cluster)
+                .filter(v -> !v.equals(version))
+                .orElse(null);
     }
 
     private boolean hasRecipeDiffs(Map<String, Object> diff) {

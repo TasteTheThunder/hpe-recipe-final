@@ -64,7 +64,7 @@ pipeline {
                         env.CHART_VERSION = versionLine.split(':')[1].trim()
                     }
 
-                    env.RELEASE_NAME = "recipe-${params.CLUSTER}-v${env.CHART_VERSION.replace('.', '-')}"
+                    env.RELEASE_NAME = "recipe-${params.CLUSTER}"
 
                     def valuesFileName = ''
                     if (params.VALUES_FILE?.trim()) {

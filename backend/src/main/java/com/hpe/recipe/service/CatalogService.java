@@ -21,12 +21,24 @@ public class CatalogService {
     }
 
     public List<Catalog> getAllCatalogs(String cluster) {
-        return helmReleaseService.getAllHelmReleases(cluster).stream()
-            .map(r -> {
-                String displayName = (r.getCatalogName() != null && !r.getCatalogName().isBlank())
-                    ? r.getCatalogName()
-                    : r.getReleaseName();
-                return new Catalog(
+        return helmReleaseService.getActiveDeployedCatalog(cluster)
+            .map(this::toCatalog)
+            .map(List::of)
+            .orElse(Collections.emptyList());
+    }
+
+    public List<Recipe> getRecipesByCatalog(String cluster, String catalogVersion) {
+        return helmReleaseService.getActiveDeployedCatalog(cluster)
+                .filter(c -> c.getVersion().equals(catalogVersion))
+                .map(HelmRelease::getRecipes)
+                .orElse(Collections.emptyList());
+    }
+
+    private Catalog toCatalog(HelmRelease r) {
+        String displayName = (r.getCatalogName() != null && !r.getCatalogName().isBlank())
+                ? r.getCatalogName()
+                : r.getReleaseName();
+        return new Catalog(
                 r.getVersion(),
                 displayName,
                 r.getCatalogName(),
@@ -35,16 +47,6 @@ public class CatalogService {
                 r.getCatalogStatus(),
                 r.getMaintainer(),
                 r.getRecipes());
-            })
-                .collect(Collectors.toList());
-    }
-
-    public List<Recipe> getRecipesByCatalog(String cluster, String catalogVersion) {
-        return helmReleaseService.getAllHelmReleases(cluster).stream()
-                .filter(c -> c.getVersion().equals(catalogVersion))
-                .findFirst()
-                .map(HelmRelease::getRecipes)
-                .orElse(Collections.emptyList());
     }
 
     public Map<String, ComponentSpec> getComponentsByRecipe(String recipeVersion) {

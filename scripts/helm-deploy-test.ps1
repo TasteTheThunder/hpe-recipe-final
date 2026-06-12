@@ -7,7 +7,7 @@ $ChartDir = Join-Path $Root "helm\recipe-detection-chart"
 $ValuesFile = Join-Path $ChartDir "values-v9.0.6.yaml"
 $Cluster = "dev"
 $ChartVersion = "9.0.6"
-$ReleaseName = "recipe-$Cluster-v$($ChartVersion.Replace('.', '-'))"
+$ReleaseName = "recipe-$Cluster"
 
 Write-Host "Deploying TEST release $ReleaseName on $Cluster ..." -ForegroundColor Cyan
 

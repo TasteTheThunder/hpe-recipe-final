@@ -11,6 +11,7 @@ import {
 import { normalizeRecipeDescription, parseUpgradeList, normalizeVersion } from './utils';
 
 const API_BASE = '/api';
+const DRAFT_SOURCE_RELEASE = '__draft__';
 
 const readUpgradeList = (spec, key, fallbackKey) => {
   if (!spec || typeof spec !== 'object') return [];
@@ -21,6 +22,175 @@ const readUpgradeList = (spec, key, fallbackKey) => {
 };
 
 const readVersion = (spec) => (typeof spec === 'string' ? spec : (spec?.version || ''));
+
+const cloneDraftRecipes = (drafts) => drafts.map((d) => ({
+  ...d,
+  upgradeFrom: [...(d.upgradeFrom || [])],
+  upgradeTo: [...(d.upgradeTo || [])],
+  sourceRecipeVersions: [...(d.sourceRecipeVersions || [])],
+  components: d.components.map((c) => ({ ...c })),
+}));
+
+const draftToRecipeShape = (draft) => ({
+  version: draft.version,
+  components: draft.components.reduce((acc, c) => {
+    const name = String(c.name || '').trim();
+    const compVersion = String(c.version || '').trim();
+    if (!name || !compVersion) return acc;
+    acc[name] = {
+      version: compVersion,
+      release_date: c.releaseDate || '',
+      upgrade_from: parseUpgradeList(c.upgradeFrom),
+      upgrade_to: parseUpgradeList(c.upgradeTo),
+    };
+    return acc;
+  }, {}),
+});
+
+const buildSourceComponentInfo = (sourceRecipe) => {
+  const map = {};
+  Object.entries(sourceRecipe?.components || {}).forEach(([name, spec]) => {
+    const compVersion = readVersion(spec);
+    const upgradeToList = readUpgradeList(spec, 'upgrade_to', 'upgradeTo');
+    const upgradeToFirst = upgradeToList.length > 0 ? upgradeToList[0] : '';
+    if (!name || !compVersion) return;
+    if (!map[name]) {
+      map[name] = { sourceVersion: compVersion, upgradeToFirst, releaseDate: spec?.release_date || '' };
+    }
+  });
+  return map;
+};
+
+const resolveSourceRecipeData = (sourceReleaseVersion, sourceRecipeVersion, drafts, cache) => {
+  const normalized = normalizeVersion(sourceRecipeVersion);
+  if (!normalized || !sourceReleaseVersion) return null;
+
+  if (sourceReleaseVersion === DRAFT_SOURCE_RELEASE) {
+    const local = drafts.find((d) => normalizeVersion(d.version) === normalized);
+    return local ? draftToRecipeShape(local) : null;
+  }
+
+  const cacheEntry = cache[sourceReleaseVersion];
+  if (!cacheEntry?.recipes) return null;
+  return cacheEntry.recipes.find((r) => normalizeVersion(r.version) === normalized) || null;
+};
+
+const getSelectedSourceVersions = (draft) => (
+  draft.sourceRecipeVersions?.length
+    ? draft.sourceRecipeVersions
+    : (draft.sourceRecipeVersion ? [draft.sourceRecipeVersion] : [])
+);
+
+const populateDestinationFromSources = (dest, sources) => {
+  if (!dest.sourceEnabled || sources.length === 0) return dest;
+
+  if (!dest.upgradeFromTouched) {
+    dest.upgradeFrom = sources
+      .map((s) => normalizeVersion(s.version))
+      .filter(Boolean);
+  }
+
+  const nextComponents = dest.components.map((c) => ({ ...c }));
+
+  sources.forEach((source, sourceIdx) => {
+    const sourceComponentInfo = buildSourceComponentInfo(source);
+    Object.entries(sourceComponentInfo).forEach(([name, info]) => {
+      const existing = nextComponents.find((c) => String(c.name || '').trim() === name);
+      if (existing) {
+        if (!existing.versionTouched && sourceIdx === 0 && info.upgradeToFirst) {
+          existing.version = info.upgradeToFirst;
+        }
+        if (!existing.upgradeFromTouched) {
+          const fromVersions = sources
+            .map((s) => buildSourceComponentInfo(s)[name]?.sourceVersion)
+            .filter(Boolean);
+          existing.upgradeFrom = [...new Set(fromVersions)].join(', ');
+        }
+        if (!existing.releaseDate && info.releaseDate && sourceIdx === 0) {
+          existing.releaseDate = info.releaseDate;
+        }
+        return;
+      }
+
+      if (sourceIdx === 0) {
+        nextComponents.push({
+          name,
+          version: info.upgradeToFirst || '',
+          releaseDate: info.releaseDate || '',
+          upgradeFrom: info.sourceVersion || '',
+          upgradeTo: '',
+          versionTouched: false,
+          upgradeFromTouched: false,
+          upgradeToTouched: false,
+        });
+      }
+    });
+  });
+
+  dest.components = nextComponents.filter((component) => {
+    const isEmpty = !component.name && !component.version && !component.releaseDate
+      && !component.upgradeFrom && !component.upgradeTo;
+    const isUntouched = !component.versionTouched && !component.upgradeFromTouched && !component.upgradeToTouched;
+    return !(isEmpty && isUntouched);
+  });
+
+  return dest;
+};
+
+const syncAllDraftSourceLinks = (drafts, cache) => {
+  const result = cloneDraftRecipes(drafts);
+  const destsByLocalSourceVersion = new Map();
+
+  result.forEach((dest) => {
+    if (!dest.sourceEnabled || !dest.sourceReleaseVersion) return;
+
+    const sourceVersions = getSelectedSourceVersions(dest);
+    const sources = sourceVersions
+      .map((sv) => resolveSourceRecipeData(dest.sourceReleaseVersion, sv, result, cache))
+      .filter(Boolean);
+
+    populateDestinationFromSources(dest, sources);
+
+    if (dest.sourceReleaseVersion === DRAFT_SOURCE_RELEASE) {
+      sourceVersions.forEach((sv) => {
+        const normalized = normalizeVersion(sv);
+        if (!normalized) return;
+        if (!destsByLocalSourceVersion.has(normalized)) {
+          destsByLocalSourceVersion.set(normalized, []);
+        }
+        destsByLocalSourceVersion.get(normalized).push(dest);
+      });
+    }
+  });
+
+  result.forEach((sourceDraft) => {
+    const sourceVersion = normalizeVersion(sourceDraft.version);
+    if (!sourceVersion) return;
+
+    const linkedDests = destsByLocalSourceVersion.get(sourceVersion) || [];
+
+    if (!sourceDraft.upgradeToTouched) {
+      sourceDraft.upgradeTo = [...new Set(
+        linkedDests.map((d) => normalizeVersion(d.version)).filter(Boolean),
+      )];
+    }
+
+    sourceDraft.components.forEach((srcComp) => {
+      if (srcComp.upgradeToTouched) return;
+      const name = String(srcComp.name || '').trim();
+      if (!name) return;
+
+      const autoTos = linkedDests
+        .flatMap((dest) => dest.components.filter((c) => String(c.name || '').trim() === name))
+        .map((c) => String(c.version || '').trim())
+        .filter(Boolean);
+
+      srcComp.upgradeTo = [...new Set(autoTos)].join(', ');
+    });
+  });
+
+  return result;
+};
 
 export default function CreateReleaseForm({ cluster, onCreated }) {
   const [version, setVersion] = useState('');
@@ -67,14 +237,11 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
     upgradeFromTouched: false,
     upgradeToTouched: false,
     sourceReleaseVersion: '',
-    sourceRecipeVersion: '',
+    sourceRecipeVersions: [],
     sourceEnabled: false,
   });
 
-  // Auto-generate release name from version
-  const autoReleaseName = version.trim()
-    ? `recipe-detection-v${version.trim().replace(/\./g, '-')}`
-    : '';
+  const autoReleaseName = cluster ? `recipe-${cluster}` : '';
 
   useEffect(() => {
     setImportError(null);
@@ -131,108 +298,41 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
       });
   };
 
-  const getSourceRecipeForDraft = (draft) => {
-    if (!draft?.sourceEnabled || !draft?.sourceReleaseVersion || !draft?.sourceRecipeVersion) return null;
-    const cache = sourceRecipesCache[draft.sourceReleaseVersion];
-    if (!cache || !Array.isArray(cache.recipes)) return null;
-    return cache.recipes.find((r) => r.version === draft.sourceRecipeVersion) || null;
-  };
-
-  const buildSourceComponentInfo = (sourceRecipe) => {
-    const map = {};
-    Object.entries(sourceRecipe?.components || {}).forEach(([name, spec]) => {
-      const version = readVersion(spec);
-      const upgradeToList = readUpgradeList(spec, 'upgrade_to', 'upgradeTo');
-      const upgradeToFirst = upgradeToList.length > 0 ? upgradeToList[0] : '';
-      if (!name || !version) return;
-      if (!map[name]) {
-        map[name] = { sourceVersion: version, upgradeToFirst, releaseDate: spec?.release_date || '' };
-      }
-    });
-    return map;
-  };
-
-  const applySourceRecipesToDraft = (draft, sourceRecipe) => {
-    const next = { ...draft };
-    if (!next.sourceEnabled || !sourceRecipe) return next;
-
-    if (!next.upgradeFromTouched) {
-      next.upgradeFrom = sourceRecipe.version ? [sourceRecipe.version] : [];
-    }
-
-    const sourceComponentInfo = buildSourceComponentInfo(sourceRecipe);
-    const nextComponents = [...next.components];
-
-    Object.entries(sourceComponentInfo).forEach(([name, info]) => {
-      const existing = nextComponents.find((c) => String(c.name || '').trim() === name);
-      if (existing) {
-        if (!existing.versionTouched && info.upgradeToFirst) {
-          existing.version = info.upgradeToFirst;
-        }
-        if (!existing.upgradeFromTouched) {
-          existing.upgradeFrom = info.sourceVersion;
-        }
-        if (!existing.releaseDate && info.releaseDate) {
-          existing.releaseDate = info.releaseDate;
-        }
-        return;
-      }
-
-      nextComponents.push({
-        name,
-        version: info.upgradeToFirst || '',
-        releaseDate: info.releaseDate || '',
-        upgradeFrom: info.sourceVersion || '',
-        upgradeTo: '',
-        versionTouched: false,
-        upgradeFromTouched: false,
-        upgradeToTouched: false,
-      });
-    });
-
-    next.components = nextComponents.filter((component) => {
-      const isEmpty = !component.name && !component.version && !component.releaseDate
-        && !component.upgradeFrom && !component.upgradeTo;
-      const isUntouched = !component.versionTouched && !component.upgradeFromTouched && !component.upgradeToTouched;
-      return !(isEmpty && isUntouched);
-    });
-
-    return next;
-  };
+  const runSourceSync = (drafts) => syncAllDraftSourceLinks(drafts, sourceRecipesCache);
 
   const updateDraftSourceRelease = (recipeId, releaseVersion) => {
-    if (releaseVersion) loadSourceRecipes(releaseVersion);
-    setDraftRecipes((prev) => prev.map((r) => {
-      if (r.id !== recipeId) return r;
-      const next = {
-        ...r,
-        sourceReleaseVersion: releaseVersion,
-        sourceRecipeVersion: '',
-      };
-      return applySourceRecipesToDraft(next, null);
-    }));
+    if (releaseVersion && releaseVersion !== DRAFT_SOURCE_RELEASE) {
+      loadSourceRecipes(releaseVersion);
+    }
+    setDraftRecipes((prev) => runSourceSync(prev.map((r) => (
+      r.id === recipeId
+        ? { ...r, sourceReleaseVersion: releaseVersion, sourceRecipeVersions: [] }
+        : r
+    ))));
   };
 
-  const updateDraftSourceRecipe = (recipeId, recipeVersion) => {
-    setDraftRecipes((prev) => prev.map((r) => {
+  const toggleDraftSourceRecipe = (recipeId, recipeVersion) => {
+    setDraftRecipes((prev) => runSourceSync(prev.map((r) => {
       if (r.id !== recipeId) return r;
-      const next = { ...r, sourceRecipeVersion: recipeVersion };
-      return applySourceRecipesToDraft(next, getSourceRecipeForDraft(next));
-    }));
+      const normalized = normalizeVersion(recipeVersion);
+      const current = r.sourceRecipeVersions || [];
+      const exists = current.some((v) => normalizeVersion(v) === normalized);
+      return {
+        ...r,
+        sourceRecipeVersions: exists
+          ? current.filter((v) => normalizeVersion(v) !== normalized)
+          : [...current, recipeVersion],
+      };
+    })));
   };
 
   useEffect(() => {
-    setDraftRecipes((prev) => prev.map((r) => {
-      if (!r.sourceReleaseVersion || !r.sourceRecipeVersion) return r;
-      const sourceRecipe = getSourceRecipeForDraft(r);
-      if (!sourceRecipe) return r;
-      return applySourceRecipesToDraft(r, sourceRecipe);
-    }));
+    setDraftRecipes((prev) => runSourceSync(prev));
   }, [sourceRecipesCache]);
 
   const addRecipeDraft = () => {
     const recipe = createEmptyRecipe();
-    setDraftRecipes((prev) => [...prev, recipe]);
+    setDraftRecipes((prev) => runSourceSync([...prev, recipe]));
     setExpandedRecipeIds((prev) => [...prev, recipe.id]);
   };
 
@@ -289,17 +389,17 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
       upgradeFromTouched: false,
       upgradeToTouched: false,
       sourceReleaseVersion: '',
-      sourceRecipeVersion: '',
+      sourceRecipeVersions: [],
       sourceEnabled: false,
     };
 
-    setDraftRecipes((prev) => [...prev, imported]);
+    setDraftRecipes((prev) => runSourceSync([...prev, imported]));
     setExpandedRecipeIds((prev) => [...prev, imported.id]);
     setImportError(null);
   };
 
   const removeRecipeDraft = (id) => {
-    setDraftRecipes((prev) => prev.filter((r) => r.id !== id));
+    setDraftRecipes((prev) => runSourceSync(prev.filter((r) => r.id !== id)));
     setExpandedRecipeIds((prev) => prev.filter((rid) => rid !== id));
   };
 
@@ -310,17 +410,17 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
   };
 
   const updateRecipeDraft = (id, field, value) => {
-    setDraftRecipes((prev) => prev.map((r) => {
+    setDraftRecipes((prev) => runSourceSync(prev.map((r) => {
       if (r.id !== id) return r;
       const next = { ...r, [field]: value };
       if (field === 'upgradeFrom') next.upgradeFromTouched = true;
       if (field === 'upgradeTo') next.upgradeToTouched = true;
-      return applySourceRecipesToDraft(next, getSourceRecipeForDraft(next));
-    }));
+      return next;
+    })));
   };
 
   const updateDraftComponent = (recipeId, index, field, value) => {
-    setDraftRecipes((prev) => prev.map((r) => {
+    setDraftRecipes((prev) => runSourceSync(prev.map((r) => {
       if (r.id !== recipeId) return r;
       const next = [...r.components];
       const updated = { ...next[index], [field]: value };
@@ -328,9 +428,8 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
       if (field === 'upgradeFrom') updated.upgradeFromTouched = true;
       if (field === 'upgradeTo') updated.upgradeToTouched = true;
       next[index] = updated;
-      const nextRecipe = { ...r, components: next };
-      return applySourceRecipesToDraft(nextRecipe, getSourceRecipeForDraft(nextRecipe));
-    }));
+      return { ...r, components: next };
+    })));
   };
 
   const addDraftComponent = (recipeId) => {
@@ -361,7 +460,7 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
   };
 
   const toggleDraftUpgradeTo = (recipeId, toVersion) => {
-    setDraftRecipes((prev) => prev.map((r) => {
+    setDraftRecipes((prev) => runSourceSync(prev.map((r) => {
       if (r.id !== recipeId) return r;
       const base = r.upgradeTo || [];
       const exists = base.includes(toVersion);
@@ -370,11 +469,11 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
         upgradeTo: exists ? base.filter((v) => v !== toVersion) : [...base, toVersion],
         upgradeToTouched: true,
       };
-    }));
+    })));
   };
 
   const toggleDraftUpgradeFrom = (recipeId, fromVersion) => {
-    setDraftRecipes((prev) => prev.map((r) => {
+    setDraftRecipes((prev) => runSourceSync(prev.map((r) => {
       if (r.id !== recipeId) return r;
       const base = r.upgradeFrom || [];
       const exists = base.includes(fromVersion);
@@ -383,7 +482,7 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
         upgradeFrom: exists ? base.filter((v) => v !== fromVersion) : [...base, fromVersion],
         upgradeFromTouched: true,
       };
-    }));
+    })));
   };
 
   const handleSubmit = (e) => {
@@ -574,7 +673,6 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
           background: `${T.yellow}12`, border: `1px solid ${T.yellow}33`,
           fontSize: 12, color: T.yellow,
         }}>
-          <span>⏳</span>
           Status is set automatically — "pending" on creation, "deployed" after Jenkins/Helm deploys successfully
         </div>
       </div>
@@ -783,6 +881,7 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
                           onChange={(e) => updateDraftSourceRelease(recipe.id, e.target.value)}
                         >
                           <option value="">Select release</option>
+                          <option value={DRAFT_SOURCE_RELEASE}>This release (draft recipes)</option>
                           {availableReleases
                             .filter((r) => r.version !== version.trim())
                             .map((r) => (
@@ -791,24 +890,76 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
                         </select>
                       </div>
                       <div>
-                        <label style={labelStyle}>Source Recipe</label>
-                        <select
-                          style={inputStyle}
-                          value={recipe.sourceRecipeVersion || ''}
-                          onChange={(e) => updateDraftSourceRecipe(recipe.id, e.target.value)}
-                          disabled={!recipe.sourceReleaseVersion}
-                        >
-                          <option value="">
-                            {recipe.sourceReleaseVersion ? 'Select recipe' : 'Select a release first'}
-                          </option>
-                          {(sourceRecipesCache[recipe.sourceReleaseVersion]?.recipes || []).map((r) => (
-                            <option key={`source-recipe-${recipe.id}-${r.version}`} value={r.version}>v{r.version}</option>
-                          ))}
-                        </select>
-                        {recipe.sourceReleaseVersion && sourceRecipesCache[recipe.sourceReleaseVersion]?.loading && (
+                        <label style={labelStyle}>Source Recipes (select one or more)</label>
+                        {!recipe.sourceReleaseVersion && (
+                          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>
+                            Select a release first
+                          </div>
+                        )}
+                        {recipe.sourceReleaseVersion === DRAFT_SOURCE_RELEASE && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                            {draftRecipes
+                              .filter((d) => d.id !== recipe.id && d.version.trim())
+                              .map((d) => {
+                                const selected = (recipe.sourceRecipeVersions || [])
+                                  .some((v) => normalizeVersion(v) === normalizeVersion(d.version));
+                                return (
+                                  <button
+                                    key={`draft-source-${recipe.id}-${d.id}`}
+                                    type="button"
+                                    onClick={() => toggleDraftSourceRecipe(recipe.id, d.version)}
+                                    style={{
+                                      padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                      background: selected ? `${T.blue}22` : T.bgSurface,
+                                      color: selected ? T.blue : T.textMuted,
+                                      border: `1px solid ${selected ? T.blue : T.border}`,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    v{d.version.trim()}
+                                  </button>
+                                );
+                              })}
+                            {draftRecipes.filter((d) => d.id !== recipe.id && d.version.trim()).length === 0 && (
+                              <span style={{ fontSize: 12, color: T.textMuted }}>
+                                Add another recipe to this release first
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {recipe.sourceReleaseVersion
+                          && recipe.sourceReleaseVersion !== DRAFT_SOURCE_RELEASE && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                            {(sourceRecipesCache[recipe.sourceReleaseVersion]?.recipes || []).map((r) => {
+                              const selected = (recipe.sourceRecipeVersions || [])
+                                .some((v) => normalizeVersion(v) === normalizeVersion(r.version));
+                              return (
+                                <button
+                                  key={`source-recipe-${recipe.id}-${r.version}`}
+                                  type="button"
+                                  onClick={() => toggleDraftSourceRecipe(recipe.id, r.version)}
+                                  style={{
+                                    padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                    background: selected ? `${T.blue}22` : T.bgSurface,
+                                    color: selected ? T.blue : T.textMuted,
+                                    border: `1px solid ${selected ? T.blue : T.border}`,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  v{r.version}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {recipe.sourceReleaseVersion
+                          && recipe.sourceReleaseVersion !== DRAFT_SOURCE_RELEASE
+                          && sourceRecipesCache[recipe.sourceReleaseVersion]?.loading && (
                           <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>Loading recipes...</div>
                         )}
-                        {recipe.sourceReleaseVersion && sourceRecipesCache[recipe.sourceReleaseVersion]?.error && (
+                        {recipe.sourceReleaseVersion
+                          && recipe.sourceReleaseVersion !== DRAFT_SOURCE_RELEASE
+                          && sourceRecipesCache[recipe.sourceReleaseVersion]?.error && (
                           <div style={{ fontSize: 12, color: T.red, marginTop: 6 }}>
                             {sourceRecipesCache[recipe.sourceReleaseVersion].error}
                           </div>
@@ -817,7 +968,8 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
                     </div>
                   )}
                   <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>
-                    Component upgrade paths and recipe upgrade-from values auto-fill from the selected source recipe(s).
+                    Auto-fills upgrade paths on the new recipe and, for draft sources in this release,
+                    adds the new recipe to each source&apos;s upgrade_to list (recipe and matching components).
                   </div>
                 </div>
 
