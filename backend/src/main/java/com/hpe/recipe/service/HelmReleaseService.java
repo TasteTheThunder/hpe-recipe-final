@@ -2,6 +2,7 @@ package com.hpe.recipe.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hpe.recipe.config.PromotionProperties;
 import com.hpe.recipe.model.ComponentSpec;
 import com.hpe.recipe.model.HelmRelease;
 import com.hpe.recipe.model.Recipe;
@@ -27,14 +28,15 @@ public class HelmReleaseService {
     private static final String LABEL_APP_VERSION = "app.kubernetes.io/version";
     private static final String ANNOTATION_RELEASE_NAME = "meta.helm.sh/release-name";
     private static final String RECIPE_DATA_KEY = "recipe-data.json";
-    public static final List<String> PROMOTION_PIPELINE = List.of("dev", "qa", "integration", "prod");
+    private final List<String> promotionPipeline;
 
     private final Map<String, KubernetesClient> clients;
     private final Map<String, Map<String, HelmRelease>> draftReleasesByCluster = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public HelmReleaseService(Map<String, KubernetesClient> clients) {
+    public HelmReleaseService(Map<String, KubernetesClient> clients, PromotionProperties promotionProperties) {
         this.clients = clients;
+        this.promotionPipeline = promotionProperties.getPipeline();
     }
 
     // ================= CLIENT =================
@@ -316,26 +318,26 @@ public class HelmReleaseService {
     }
 
     public void validatePromotionDeploy(String targetCluster, String version) {
-        if (!PROMOTION_PIPELINE.contains(targetCluster)) {
+        if (!promotionPipeline.contains(targetCluster)) {
             throw new IllegalStateException("Unknown cluster: " + targetCluster);
         }
 
-        int idx = PROMOTION_PIPELINE.indexOf(targetCluster);
+        int idx = promotionPipeline.indexOf(targetCluster);
         if (idx == 0) {
             return;
         }
 
-        String requiredCluster = PROMOTION_PIPELINE.get(idx - 1);
+        String requiredCluster = promotionPipeline.get(idx - 1);
         if (getDeployedFromCluster(requiredCluster, version) == null) {
             throw new IllegalStateException(
                     "Version " + version + " must be deployed on " + requiredCluster.toUpperCase()
                             + " before promoting to " + targetCluster.toUpperCase()
-                            + " (pipeline: dev → qa → integration → prod)");
+                            + " (pipeline: " + String.join(" → ", promotionPipeline) + ")");
         }
     }
 
     public Optional<String> getNextPromotionTarget(String version) {
-        for (String cluster : PROMOTION_PIPELINE) {
+        for (String cluster : promotionPipeline) {
             if (getDeployedFromCluster(cluster, version) != null) {
                 continue;
             }
@@ -351,11 +353,11 @@ public class HelmReleaseService {
 
     public Map<String, Object> getPromotionOptions(String version) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("pipeline", PROMOTION_PIPELINE);
+        result.put("pipeline", promotionPipeline);
 
         Map<String, Boolean> deployedOn = new LinkedHashMap<>();
         Map<String, String> activeVersions = new LinkedHashMap<>();
-        for (String cluster : PROMOTION_PIPELINE) {
+        for (String cluster : promotionPipeline) {
             Optional<HelmRelease> active = getActiveDeployedCatalog(cluster);
             activeVersions.put(cluster, active.map(HelmRelease::getVersion).orElse(""));
             deployedOn.put(cluster, getDeployedFromCluster(cluster, version) != null);
@@ -364,7 +366,7 @@ public class HelmReleaseService {
         result.put("activeVersionOnCluster", activeVersions);
 
         List<String> allowedTargets = new ArrayList<>();
-        for (String cluster : PROMOTION_PIPELINE) {
+        for (String cluster : promotionPipeline) {
             try {
                 validatePromotionDeploy(cluster, version);
                 allowedTargets.add(cluster);
@@ -387,7 +389,7 @@ public class HelmReleaseService {
             return local;
         }
 
-        for (String pipelineCluster : PROMOTION_PIPELINE) {
+        for (String pipelineCluster : promotionPipeline) {
             HelmRelease draft = getDraft(pipelineCluster, version);
             if (draft != null) {
                 HelmRelease copy = copyRelease(draft);
@@ -396,10 +398,10 @@ public class HelmReleaseService {
             }
         }
 
-        int idx = PROMOTION_PIPELINE.indexOf(targetCluster);
+        int idx = promotionPipeline.indexOf(targetCluster);
         if (idx > 0) {
             for (int i = idx - 1; i >= 0; i--) {
-                HelmRelease deployed = getDeployedFromCluster(PROMOTION_PIPELINE.get(i), version);
+                HelmRelease deployed = getDeployedFromCluster(promotionPipeline.get(i), version);
                 if (deployed != null) {
                     HelmRelease copy = copyRelease(deployed);
                     copy.setCluster(targetCluster);

@@ -43,7 +43,8 @@ public class GitOpsService {
      * Generate a Helm values YAML file from a HelmRelease and push it to GitHub.
      * Also updates Chart.yaml version so Jenkins picks up the right version.
      */
-    public synchronized void generateAndPush(HelmRelease release) throws Exception {
+    public void generateAndPush(HelmRelease release) throws Exception {
+        synchronized (GitSupport.REMOTE_LOCK) {
 
         System.out.println("Starting GitOps for version: " + release.getVersion());
 
@@ -78,9 +79,13 @@ public class GitOpsService {
                     .call();
 
             System.out.println("Pushing to GitHub...");
-            git.push()
+            var pushResults = git.push()
                     .setCredentialsProvider(getCredentials())
                     .call();
+            if (!GitSupport.pushAccepted(pushResults)) {
+                throw new IllegalStateException("Git push rejected (remote moved): "
+                        + GitSupport.pushFailureDetail(pushResults));
+            }
 
             System.out.println("PUSH SUCCESS");
 
@@ -90,6 +95,7 @@ public class GitOpsService {
             throw e;
         } finally {
             git.close();
+        }
         }
     }
 

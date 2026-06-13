@@ -20,6 +20,10 @@ gitops:
   username: ${GIT_USERNAME:TasteTheThunder}
   token: ${GIT_TOKEN:}
   values-dir: helm/recipe-detection-chart
+  state-path: ${java.io.tmpdir}/hpe-recipe-gitstate
+
+promotion:
+  pipeline: dev,qa,integration,prod
 
 jenkins:
   url: ${JENKINS_URL:http://localhost:8080}
