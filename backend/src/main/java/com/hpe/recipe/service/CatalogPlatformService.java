@@ -1,0 +1,289 @@
+package com.hpe.recipe.service;
+
+import com.hpe.recipe.config.PromotionProperties;
+import com.hpe.recipe.model.HelmRelease;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Git-backed catalog platform: orchestrates the write operations (create, deploy-to-dev,
+ * promote, rollback, dev-fork-on-edit) and the derived reads, using {@link GitStateService}
+ * as the source of truth, {@link GitOpsService} to render the per-deploy Helm values file
+ * (with the destination env's target_cluster), and {@link JenkinsService} to trigger the deploy.
+ *
+ * <p>Version ids are normalized to the unprefixed form (e.g. "0.16") so the rendered
+ * {@code values-v<version>.yaml} and the Jenkins {@code CHART_VERSION} stay consistent with the
+ * Jenkinsfile. The frontend may display them with a leading "v".
+ *
+ * <p>Self-contained: it does not depend on the legacy {@code HelmReleaseService}/ConfigMap path,
+ * which keeps working until the frontend cutover repoints reads to these endpoints.
+ */
+@Service
+public class CatalogPlatformService {
+
+    private static final Logger log = LoggerFactory.getLogger(CatalogPlatformService.class);
+
+    private final GitStateService gitState;
+    private final GitOpsService gitOps;
+    private final JenkinsService jenkins;
+    private final PromotionProperties promotionProperties;
+
+    public CatalogPlatformService(GitStateService gitState, GitOpsService gitOps,
+                                  JenkinsService jenkins, PromotionProperties promotionProperties) {
+        this.gitState = gitState;
+        this.gitOps = gitOps;
+        this.jenkins = jenkins;
+        this.promotionProperties = promotionProperties;
+    }
+
+    // ===================== READS =====================
+
+    public List<String> pipeline() {
+        return promotionProperties.getPipeline();
+    }
+
+    public Map<String, String> environments() {
+        return gitState.readAllEnvironments();
+    }
+
+    public List<String> versions() {
+        return gitState.listVersions();
+    }
+
+    public List<Map<String, Object>> history() {
+        return gitState.readHistory();
+    }
+
+    public HelmRelease version(String version) {
+        return gitState.readVersion(normalize(version));
+    }
+
+    public boolean isEmpty() {
+        return versions().isEmpty();
+    }
+
+    /** Per-version promotion view: where it's live, allowed forward targets, and rollback availability. */
+    public Map<String, Object> promotionOptions(String version) {
+        String v = normalize(version);
+        List<String> pipeline = pipeline();
+        Map<String, String> envs = gitState.readAllEnvironments();
+
+        Map<String, Boolean> deployedOn = new LinkedHashMap<>();
+        Map<String, String> activeVersions = new LinkedHashMap<>();
+        Map<String, Boolean> canRollback = new LinkedHashMap<>();
+        for (int i = 0; i < pipeline.size(); i++) {
+            String env = pipeline.get(i);
+            String active = envs.get(env);
+            activeVersions.put(env, active != null ? active : "");
+            deployedOn.put(env, v.equals(active));
+            canRollback.put(env, i > 0 && gitState.readEnvironmentHistory(env).size() >= 2);
+        }
+
+        List<String> allowedTargets = new ArrayList<>();
+        if (!pipeline.isEmpty() && !v.equals(envs.get(pipeline.get(0)))) {
+            allowedTargets.add(pipeline.get(0)); // deploy to dev
+        }
+        for (int i = 1; i < pipeline.size(); i++) {
+            String env = pipeline.get(i);
+            String prev = pipeline.get(i - 1);
+            if (v.equals(envs.get(prev)) && !v.equals(envs.get(env))) {
+                allowedTargets.add(env);
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("pipeline", pipeline);
+        result.put("deployedOn", deployedOn);
+        result.put("activeVersionOnCluster", activeVersions);
+        result.put("allowedTargets", allowedTargets);
+        result.put("canRollback", canRollback);
+        return result;
+    }
+
+    // ===================== WRITES =====================
+
+    /** Bootstrap a brand-new catalog version. Only allowed when no version exists anywhere. */
+    public HelmRelease createVersion(HelmRelease release) {
+        if (release == null) {
+            throw new IllegalArgumentException("Release body is required");
+        }
+        if (!versions().isEmpty()) {
+            throw new IllegalStateException(
+                    "Create is only available on an empty system; a catalog version already exists "
+                            + "(use Edit on dev to fork a new version)");
+        }
+        String version = normalize(release.getVersion());
+        release.setVersion(version);
+        gitState.writeVersion(release);
+        appendEvent("create", version, null, null);
+        return gitState.readVersion(version);
+    }
+
+    /** Deploy an existing version to the first stage (dev) and trigger Jenkins. */
+    public void deployToDev(String version) {
+        String v = requireExistingVersion(version);
+        String dev = pipeline().get(0);
+        gitState.setEnvironmentVersion(dev, v);
+        gitState.appendEnvironmentHistory(dev, v);
+        appendEvent("deploy", v, dev, null);
+        renderAndTrigger(v, dev);
+    }
+
+    /** Promote a version forward to the immediately next stage (rejects skips). */
+    public void promote(String version, String toEnv) {
+        String v = normalize(version);
+        List<String> pipeline = pipeline();
+        int idx = pipeline.indexOf(toEnv);
+        if (idx < 0) {
+            throw new IllegalStateException("Unknown environment: " + toEnv);
+        }
+        if (idx == 0) {
+            throw new IllegalStateException("Cannot promote to " + toEnv.toUpperCase()
+                    + " (it is the first stage; deploy to it directly)");
+        }
+        String prev = pipeline.get(idx - 1);
+        if (!v.equals(gitState.readEnvironmentVersion(prev))) {
+            throw new IllegalStateException("Version " + v + " must be active on " + prev.toUpperCase()
+                    + " before promoting to " + toEnv.toUpperCase()
+                    + " (pipeline: " + String.join(" → ", pipeline) + ")");
+        }
+        gitState.setEnvironmentVersion(toEnv, v);
+        gitState.appendEnvironmentHistory(toEnv, v);
+        appendEvent("promote", v, toEnv, prev);
+        renderAndTrigger(v, toEnv);
+    }
+
+    /** Roll an environment back one step to the previous version it held, and redeploy it. */
+    public void rollback(String env) {
+        List<String> pipeline = pipeline();
+        int idx = pipeline.indexOf(env);
+        if (idx < 0) {
+            throw new IllegalStateException("Unknown environment: " + env);
+        }
+        if (idx == 0) {
+            throw new IllegalStateException("Rollback is not available on " + env.toUpperCase()
+                    + " (it is edit-only; there is no previous promotion to undo)");
+        }
+        List<String> hist = gitState.readEnvironmentHistory(env);
+        if (hist.size() < 2) {
+            throw new IllegalStateException("No previous version to roll back to on " + env.toUpperCase());
+        }
+        String current = hist.get(hist.size() - 1);
+        String previous = hist.get(hist.size() - 2);
+
+        gitState.setEnvironmentVersion(env, previous);
+        gitState.setEnvironmentHistory(env, new ArrayList<>(hist.subList(0, hist.size() - 1)));
+        appendEvent("rollback", previous, env, current);
+        renderAndTrigger(previous, env);
+    }
+
+    /**
+     * DEV-only editing: forks a NEW version (auto patch bump) from the current dev catalog plus
+     * the supplied edited content, sets dev to it, and deploys. Promoted versions are never
+     * mutated because every edit creates a new version.
+     */
+    public HelmRelease editDev(HelmRelease edited) {
+        if (edited == null) {
+            throw new IllegalArgumentException("Edited catalog body is required");
+        }
+        String dev = pipeline().get(0);
+        String currentDev = gitState.readEnvironmentVersion(dev);
+        if (currentDev == null || currentDev.isBlank()) {
+            throw new IllegalStateException("Nothing to edit: dev has no deployed catalog version yet");
+        }
+        String newVersion = nextPatchVersion(currentDev, new HashSet<>(versions()));
+        edited.setVersion(newVersion);
+        gitState.writeVersion(edited);
+        gitState.setEnvironmentVersion(dev, newVersion);
+        gitState.appendEnvironmentHistory(dev, newVersion);
+        appendEvent("edit", newVersion, dev, currentDev);
+        renderAndTrigger(newVersion, dev);
+        return gitState.readVersion(newVersion);
+    }
+
+    // ===================== INTERNALS =====================
+
+    /**
+     * Render the chart values file for the destination env (target_cluster = env) and trigger
+     * Jenkins. Reuses GitOpsService.generateAndPush so the values-v&lt;version&gt;.yaml the
+     * Jenkinsfile reads is (re)written for this env — this is what makes rollback a real redeploy.
+     */
+    private void renderAndTrigger(String version, String env) {
+        HelmRelease release = gitState.readVersion(version);
+        if (release == null) {
+            throw new IllegalStateException("Version not found in Git: " + version);
+        }
+        release.setCluster(env);
+        release.setReleaseName(HelmReleaseService.helmReleaseNameForCluster(env));
+        release.setStatus("deploying");
+        try {
+            String valuesFile = gitOps.resolveValuesFileName(release);
+            gitOps.generateAndPush(release);
+            jenkins.trigger(env, "deploy", release.getVersion(), valuesFile);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to deploy " + version + " to " + env + ": " + e.getMessage(), e);
+        }
+    }
+
+    private void appendEvent(String action, String version, String env, String fromVersion) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("timestamp", Instant.now().toString());
+        event.put("action", action);
+        event.put("version", version);
+        if (env != null) {
+            event.put("env", env);
+        }
+        if (fromVersion != null) {
+            event.put("fromVersion", fromVersion);
+        }
+        gitState.appendHistoryEvent(event);
+    }
+
+    private String requireExistingVersion(String version) {
+        String v = normalize(version);
+        if (!gitState.versionExists(v)) {
+            throw new IllegalStateException("Version does not exist: " + v);
+        }
+        return v;
+    }
+
+    private static String normalize(String version) {
+        String v = RecipeDataMapper.normalizeVersion(version);
+        if (v == null || v.isBlank()) {
+            throw new IllegalArgumentException("version must not be blank");
+        }
+        return v;
+    }
+
+    private String nextPatchVersion(String current, Set<String> existing) {
+        String candidate = bumpLast(normalize(current));
+        while (existing.contains(candidate)) {
+            candidate = bumpLast(candidate);
+        }
+        return candidate;
+    }
+
+    private static String bumpLast(String version) {
+        String[] parts = version.split("\\.");
+        if (parts.length == 0) {
+            return version + ".1";
+        }
+        String last = parts[parts.length - 1];
+        try {
+            int n = Integer.parseInt(last);
+            parts[parts.length - 1] = String.valueOf(n + 1);
+            return String.join(".", parts);
+        } catch (NumberFormatException e) {
+            return version + ".1";
+        }
+    }
+}
