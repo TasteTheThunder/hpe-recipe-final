@@ -33,10 +33,14 @@ public class HelmReleaseService {
     private final Map<String, KubernetesClient> clients;
     private final Map<String, Map<String, HelmRelease>> draftReleasesByCluster = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final GitStateService gitState;
 
-    public HelmReleaseService(Map<String, KubernetesClient> clients, PromotionProperties promotionProperties) {
+    public HelmReleaseService(Map<String, KubernetesClient> clients,
+                              PromotionProperties promotionProperties,
+                              GitStateService gitState) {
         this.clients = clients;
         this.promotionPipeline = promotionProperties.getPipeline();
+        this.gitState = gitState;
     }
 
     // ================= CLIENT =================
@@ -279,42 +283,19 @@ public class HelmReleaseService {
     }
 
     public Optional<HelmRelease> getActiveDeployedCatalog(String cluster) {
-        String expectedReleaseName = helmReleaseNameForCluster(cluster);
-        HelmRelease fromExpected = null;
-        HelmRelease legacyFallback = null;
-
-        for (ConfigMap cm : fetchRecipeConfigMaps(cluster)) {
-            if (!isHelmManaged(cm)) {
-                continue;
-            }
-            HelmRelease parsed = parseConfigMap(cluster, cm);
-            if (parsed == null) {
-                continue;
-            }
-
-            Map<String, String> annotations = cm.getMetadata() != null ? cm.getMetadata().getAnnotations() : null;
-            String releaseName = annotations != null ? annotations.get(ANNOTATION_RELEASE_NAME) : null;
-
-            if (expectedReleaseName.equals(releaseName)) {
-                fromExpected = parsed;
-                break;
-            }
-
-            if (legacyFallback == null || compareVersions(parsed.getVersion(), legacyFallback.getVersion()) > 0) {
-                legacyFallback = parsed;
-            }
-        }
-
-        HelmRelease active = fromExpected != null ? fromExpected : legacyFallback;
-        if (active == null) {
+        // Git is the source of truth: the env file holds the single current version for this cluster.
+        String version = gitState.readEnvironmentVersion(cluster);
+        if (version == null || version.isBlank()) {
             return Optional.empty();
         }
-
-        HelmRelease copy = copyRelease(active);
-        copy.setCluster(cluster);
-        copy.setStatus("deployed");
-        copy.setReleaseName(helmReleaseNameForCluster(cluster));
-        return Optional.of(copy);
+        HelmRelease release = gitState.readVersion(version);
+        if (release == null) {
+            return Optional.empty();
+        }
+        release.setCluster(cluster);
+        release.setStatus("deployed");
+        release.setReleaseName(helmReleaseNameForCluster(cluster));
+        return Optional.of(release);
     }
 
     public void validatePromotionDeploy(String targetCluster, String version) {
@@ -384,33 +365,13 @@ public class HelmReleaseService {
      * (e.g. draft on dev, deploy target qa).
      */
     public HelmRelease resolveReleaseForDeploy(String targetCluster, String version) {
-        HelmRelease local = getHelmRelease(targetCluster, version);
-        if (local != null) {
-            return local;
+        String v = RecipeDataMapper.normalizeVersion(version);
+        HelmRelease release = v == null ? null : gitState.readVersion(v);
+        if (release == null) {
+            return null;
         }
-
-        for (String pipelineCluster : promotionPipeline) {
-            HelmRelease draft = getDraft(pipelineCluster, version);
-            if (draft != null) {
-                HelmRelease copy = copyRelease(draft);
-                copy.setCluster(targetCluster);
-                return copy;
-            }
-        }
-
-        int idx = promotionPipeline.indexOf(targetCluster);
-        if (idx > 0) {
-            for (int i = idx - 1; i >= 0; i--) {
-                HelmRelease deployed = getDeployedFromCluster(promotionPipeline.get(i), version);
-                if (deployed != null) {
-                    HelmRelease copy = copyRelease(deployed);
-                    copy.setCluster(targetCluster);
-                    return copy;
-                }
-            }
-        }
-
-        return null;
+        release.setCluster(targetCluster);
+        return release;
     }
 
     public void ensureDraftOnCluster(String cluster, HelmRelease release) {
@@ -427,76 +388,73 @@ public class HelmReleaseService {
     // ================= CRUD =================
 
     public List<HelmRelease> getAllHelmReleases(String cluster) {
-        Map<String, HelmRelease> merged = new LinkedHashMap<>();
-
-        getActiveDeployedCatalog(cluster).ifPresent(active ->
-                merged.put(active.getVersion(), copyRelease(active)));
-
-        draftsForCluster(cluster).forEach((version, draft) -> merged.put(version, copyRelease(draft)));
-
-        return merged.values().stream()
-                .peek(r -> r.setCluster(cluster))
-                .sorted(Comparator.comparing(HelmRelease::getVersion))
-                .collect(Collectors.toList());
+        // All catalog versions are global in Git; mark the one currently live in this cluster.
+        String active = gitState.readEnvironmentVersion(cluster);
+        List<HelmRelease> result = new ArrayList<>();
+        for (String version : gitState.listVersions()) {
+            HelmRelease release = gitState.readVersion(version);
+            if (release == null) {
+                continue;
+            }
+            release.setCluster(cluster);
+            release.setReleaseName(helmReleaseNameForCluster(cluster));
+            release.setStatus(version.equals(active) ? "deployed" : "available");
+            result.add(release);
+        }
+        result.sort(Comparator.comparing(HelmRelease::getVersion));
+        return result;
     }
 
     public HelmRelease getHelmRelease(String cluster, String version) {
-        HelmRelease draft = getDraft(cluster, version);
-        if (draft != null) {
-            return draft;
+        String v = RecipeDataMapper.normalizeVersion(version);
+        if (v == null || !gitState.versionExists(v)) {
+            return null;
         }
-
-        return getAllHelmReleases(cluster).stream()
-                .filter(h -> h.getVersion().equals(version))
-                .findFirst()
-                .orElse(null);
+        HelmRelease release = gitState.readVersion(v);
+        if (release == null) {
+            return null;
+        }
+        release.setCluster(cluster);
+        String active = gitState.readEnvironmentVersion(cluster);
+        release.setStatus(v.equals(active) ? "deployed" : "available");
+        release.setReleaseName(helmReleaseNameForCluster(cluster));
+        return release;
     }
 
     public HelmRelease createHelmRelease(String cluster, HelmRelease release) {
-
-        if (getHelmRelease(cluster, release.getVersion()) != null) return null;
-
-        if (release.getStatus() == null || release.getStatus().isBlank()) {
-            release.setStatus("pending");
+        String version = RecipeDataMapper.normalizeVersion(release.getVersion());
+        if (version == null || version.isBlank() || gitState.versionExists(version)) {
+            return null;
         }
-
-        storeDraft(cluster, release);
-        return getDraft(cluster, release.getVersion());
+        release.setVersion(version);
+        gitState.writeVersion(release);
+        return getHelmRelease(cluster, version);
     }
 
     public HelmRelease updateHelmRelease(String cluster, String version, HelmRelease release) {
-        if (getHelmRelease(cluster, version) == null) return null;
-
-        release.setVersion(version);
-        storeDraft(cluster, release);
-        updateConfigMap(cluster, version, release);
-        return getDraft(cluster, version);
+        String v = RecipeDataMapper.normalizeVersion(version);
+        if (v == null || !gitState.versionExists(v)) {
+            return null;
+        }
+        release.setVersion(v);
+        gitState.writeVersion(release);
+        return getHelmRelease(cluster, v);
     }
 
     public boolean deleteHelmRelease(String cluster, String version) {
-
-        removeDraft(cluster, version);
-
-        List<ConfigMap> cms = fetchRecipeConfigMaps(cluster);
-        boolean deleted = false;
-
-        for (ConfigMap cm : cms) {
-            HelmRelease r = parseConfigMap(cluster, cm);
-
-            if (r != null && r.getVersion().equals(version)) {
-
-                List<StatusDetails> result = getClient(cluster).configMaps()
-                        .inNamespace(cluster)
-                        .withName(cm.getMetadata().getName())
-                        .delete();
-
-                boolean removed = result != null && !result.isEmpty();
-
-                deleted = deleted || removed;
+        // Git-backed delete: remove the version definition and clear any env that points at it.
+        // (Uninstalling the running Helm release in each namespace is handled separately — step 8.)
+        String v = RecipeDataMapper.normalizeVersion(version);
+        if (v == null || !gitState.versionExists(v)) {
+            return false;
+        }
+        gitState.deleteVersion(v);
+        for (String env : promotionPipeline) {
+            if (v.equals(gitState.readEnvironmentVersion(env))) {
+                gitState.deleteEnvironment(env);
             }
         }
-
-        return deleted;
+        return true;
     }
 
     public void cleanupDraftConfigMapsIfHelmExists(String cluster, String version) {
@@ -540,21 +498,24 @@ public class HelmReleaseService {
     }
 
     public Recipe addRecipeToRelease(String cluster, String version, Recipe recipe) {
-
-        HelmRelease r = getHelmRelease(cluster, version);
+        String v = RecipeDataMapper.normalizeVersion(version);
+        HelmRelease r = v == null ? null : gitState.readVersion(v);
         if (r == null) return null;
 
+        if (r.getRecipes() == null) {
+            r.setRecipes(new ArrayList<>());
+        }
         r.getRecipes().add(recipe);
-        storeDraft(cluster, r);
-        updateConfigMap(cluster, version, r);
+        gitState.writeVersion(r);
 
         return recipe;
     }
 
     public Recipe updateRecipeInRelease(String cluster, String version, String recipeVersion, Recipe recipe) {
 
-        HelmRelease r = getHelmRelease(cluster, version);
-        if (r == null) return null;
+        String v = RecipeDataMapper.normalizeVersion(version);
+        HelmRelease r = v == null ? null : gitState.readVersion(v);
+        if (r == null || r.getRecipes() == null) return null;
 
         for (int i = 0; i < r.getRecipes().size(); i++) {
             if (r.getRecipes().get(i).getVersion().equals(recipeVersion)) {
@@ -562,8 +523,7 @@ public class HelmReleaseService {
                     recipe.setVersion(recipeVersion);
                 }
                 r.getRecipes().set(i, recipe);
-                storeDraft(cluster, r);
-                updateConfigMap(cluster, version, r);
+                gitState.writeVersion(r);
                 return recipe;
             }
         }
@@ -572,14 +532,14 @@ public class HelmReleaseService {
 
     public boolean deleteRecipeFromRelease(String cluster, String version, String recipeVersion) {
 
-        HelmRelease r = getHelmRelease(cluster, version);
-        if (r == null) return false;
+        String v = RecipeDataMapper.normalizeVersion(version);
+        HelmRelease r = v == null ? null : gitState.readVersion(v);
+        if (r == null || r.getRecipes() == null) return false;
 
         boolean removed = r.getRecipes().removeIf(x -> x.getVersion().equals(recipeVersion));
 
         if (removed) {
-            storeDraft(cluster, r);
-            updateConfigMap(cluster, version, r);
+            gitState.writeVersion(r);
         }
 
         return removed;
@@ -1035,19 +995,19 @@ public class HelmReleaseService {
 
 
     public HelmRelease getDeployedFromCluster(String cluster, String version) {
-        for (ConfigMap cm : fetchRecipeConfigMaps(cluster)) {
-            if (!isHelmManaged(cm)) {
-                continue;
-            }
-            HelmRelease parsed = parseConfigMap(cluster, cm);
-            if (parsed != null && version.equals(parsed.getVersion())) {
-                HelmRelease copy = copyRelease(parsed);
-                copy.setCluster(cluster);
-                copy.setStatus("deployed");
-                return copy;
-            }
+        String active = gitState.readEnvironmentVersion(cluster);
+        String v = RecipeDataMapper.normalizeVersion(version);
+        if (active == null || v == null || !active.equals(v)) {
+            return null;
         }
-        return null;
+        HelmRelease release = gitState.readVersion(active);
+        if (release == null) {
+            return null;
+        }
+        release.setCluster(cluster);
+        release.setStatus("deployed");
+        release.setReleaseName(helmReleaseNameForCluster(cluster));
+        return release;
     }
 
     public List<HelmRelease> getDeployedHelmReleases(String cluster) {

@@ -4,6 +4,7 @@ import com.hpe.recipe.config.ReleaseWebSocketHandler;
 import com.hpe.recipe.model.ComponentSpec;
 import com.hpe.recipe.model.HelmRelease;
 import com.hpe.recipe.model.Recipe;
+import com.hpe.recipe.service.CatalogPlatformService;
 import com.hpe.recipe.service.GitOpsService;
 import com.hpe.recipe.service.HelmReleaseService;
 import org.slf4j.Logger;
@@ -38,13 +39,16 @@ public class HelmReleaseController {
     private final HelmReleaseService helmReleaseService;
     private final ReleaseWebSocketHandler wsHandler;
     private final GitOpsService gitOpsService;
+    private final CatalogPlatformService platform;
 
     public HelmReleaseController(HelmReleaseService helmReleaseService,
                                  ReleaseWebSocketHandler wsHandler,
-                                 GitOpsService gitOpsService) {
+                                 GitOpsService gitOpsService,
+                                 CatalogPlatformService platform) {
         this.helmReleaseService = helmReleaseService;
         this.wsHandler = wsHandler;
         this.gitOpsService = gitOpsService;
+        this.platform = platform;
     }
 
   
@@ -125,7 +129,7 @@ public class HelmReleaseController {
 
     
     @PutMapping("/{version}/status")
-    public ResponseEntity<HelmRelease> updateStatus(
+    public ResponseEntity<?> updateStatus(
             @PathVariable String version,
             @RequestParam String cluster,
             @RequestBody Map<String, String> body) {
@@ -136,22 +140,12 @@ public class HelmReleaseController {
             return ResponseEntity.badRequest().build();
         }
 
-        HelmRelease release = helmReleaseService.getHelmRelease(cluster, version);
-
-        if (release == null) return ResponseEntity.notFound().build();
-
-        release.setStatus(status);
-        helmReleaseService.updateHelmRelease(cluster, version, release);
-
-        if ("deployed".equalsIgnoreCase(status)) {
-            helmReleaseService.cleanupDraftConfigMapsIfHelmExists(cluster, version);
-            helmReleaseService.cleanupDraftReleaseIfHelmExists(cluster, version);
-        }
-
+        // Deploy status is transient UI state; the deployed version per env is the Git source of
+        // truth (set at deploy time), so the Jenkins callback only drives live status badges.
         wsHandler.broadcast("status_changed",
                 Map.of("version", version, "status", status, "cluster", cluster));
 
-        return ResponseEntity.ok(release);
+        return ResponseEntity.ok(Map.of("version", version, "status", status, "cluster", cluster));
     }
 
   
@@ -160,36 +154,19 @@ public class HelmReleaseController {
             @PathVariable String version,
             @RequestParam String cluster) {
 
-        HelmRelease release = helmReleaseService.resolveReleaseForDeploy(cluster, version);
-
-        if (release == null) return ResponseEntity.notFound().build();
-
-        helmReleaseService.ensureDraftOnCluster(cluster, release);
-        release = helmReleaseService.getHelmRelease(cluster, version);
-
-        if (release.getRecipes() == null || release.getRecipes().isEmpty()) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("error", "Cannot deploy release with no recipes"));
-        }
-
         try {
-            helmReleaseService.validatePromotionDeploy(cluster, version);
-        } catch (IllegalStateException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+            // Git is the source of truth: route the legacy deploy to the Git-backed platform,
+            // which records env state + history and triggers Jenkins (deploy to the first stage,
+            // or promote one stage forward).
+            String first = platform.pipeline().get(0);
+            if (cluster.equals(first)) {
+                platform.deployToDev(version);
+            } else {
+                platform.promote(version, cluster);
+            }
 
-        release.setCluster(cluster);
-        release.setReleaseName(HelmReleaseService.helmReleaseNameForCluster(cluster));
-        release.setStatus("deploying");
-        helmReleaseService.updateHelmRelease(cluster, version, release);
-
-        wsHandler.broadcast("status_changed",
-                Map.of("version", version, "status", "deploying", "cluster", cluster));
-
-        try {
-            String valuesFileName = gitOpsService.resolveValuesFileName(release);
-            gitOpsService.generateAndPush(release);
-            triggerJenkins(cluster, "deploy", release.getVersion(), valuesFileName);
+            wsHandler.broadcast("status_changed",
+                    Map.of("version", version, "status", "deploying", "cluster", cluster));
 
             return ResponseEntity.ok(Map.of(
                     "message", "Pushed to Git. Jenkins will deploy shortly.",
@@ -197,14 +174,11 @@ public class HelmReleaseController {
                     "cluster", cluster
             ));
 
-        } catch (Exception e) {
-
-            release.setStatus("push_failed");
-            helmReleaseService.updateHelmRelease(cluster, version, release);
-
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
             wsHandler.broadcast("status_changed",
                     Map.of("version", version, "status", "push_failed", "cluster", cluster));
-
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", e.getMessage()));
         }
