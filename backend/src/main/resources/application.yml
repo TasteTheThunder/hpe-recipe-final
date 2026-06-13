@@ -14,10 +14,10 @@ management:
         include: health,info
 
 gitops:
-  repo-url: https://github.com/NaomiiAP/hpe-recipe-final.git
+  repo-url: https://github.com/TasteTheThunder/hpe-recipe-final.git
   local-path: ${java.io.tmpdir}/hpe-recipe-gitops
   branch: main
-  username: ${GIT_USERNAME:NaomiiAP}
+  username: ${GIT_USERNAME:TasteTheThunder}
   token: ${GIT_TOKEN:}
   values-dir: helm/recipe-detection-chart
 

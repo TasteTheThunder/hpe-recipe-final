@@ -50,7 +50,7 @@ public class HelmReleaseService {
     private List<ConfigMap> fetchRecipeConfigMaps(String cluster) {
         try {
             return getClient(cluster).configMaps()
-                    .inNamespace("default")
+                    .inNamespace(cluster)
                     .withLabel(LABEL_APP_NAME, "recipe-detection")
                     .list()
                     .getItems();
@@ -484,7 +484,7 @@ public class HelmReleaseService {
             if (r != null && r.getVersion().equals(version)) {
 
                 List<StatusDetails> result = getClient(cluster).configMaps()
-                        .inNamespace("default")
+                        .inNamespace(cluster)
                         .withName(cm.getMetadata().getName())
                         .delete();
 
@@ -517,7 +517,7 @@ public class HelmReleaseService {
                     && version.equals(parsed.getVersion())
                     && !isHelmManaged(cm)) {
                 getClient(cluster).configMaps()
-                        .inNamespace("default")
+                        .inNamespace(cluster)
                         .withName(cm.getMetadata().getName())
                         .delete();
             }
@@ -960,7 +960,7 @@ public class HelmReleaseService {
                     cm.getData().put(RECIPE_DATA_KEY, buildRecipeJson(release));
 
                     getClient(cluster).configMaps()
-                            .inNamespace("default")
+                            .inNamespace(cluster)
                             .resource(cm)
                             .update();
 

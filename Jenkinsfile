@@ -12,7 +12,7 @@ pipeline {
     environment {
         CHART_DIR       = 'helm/recipe-detection-chart'
         HELM_CMD        = 'helm'
-        KUBE_NAMESPACE  = 'default'
+        KUBE_NAMESPACE  = "${params.CLUSTER}"
         API_URL         = 'http://localhost:8081/api'
     }
 
@@ -140,10 +140,11 @@ pipeline {
                             sh """
                                 ${HELM_CMD} --kube-context ${params.CLUSTER} upgrade ${RELEASE_NAME} ${CHART_DIR} \\
                                     --namespace ${KUBE_NAMESPACE} \\
+                                    --create-namespace \\
                                     ${valuesArg}
                             """
                         } else {
-                            bat "${HELM_CMD} --kube-context ${params.CLUSTER} upgrade ${RELEASE_NAME} ${CHART_DIR} --namespace ${KUBE_NAMESPACE} ${valuesArg}"
+                            bat "${HELM_CMD} --kube-context ${params.CLUSTER} upgrade ${RELEASE_NAME} ${CHART_DIR} --namespace ${KUBE_NAMESPACE} --create-namespace ${valuesArg}"
                         }
                         echo "Upgraded Helm release: ${RELEASE_NAME}"
                     } else {
@@ -151,10 +152,11 @@ pipeline {
                             sh """
                                 ${HELM_CMD} --kube-context ${params.CLUSTER} install ${RELEASE_NAME} ${CHART_DIR} \\
                                     --namespace ${KUBE_NAMESPACE} \\
+                                    --create-namespace \\
                                     ${valuesArg}
                             """
                         } else {
-                            bat "${HELM_CMD} --kube-context ${params.CLUSTER} install ${RELEASE_NAME} ${CHART_DIR} --namespace ${KUBE_NAMESPACE} ${valuesArg}"
+                            bat "${HELM_CMD} --kube-context ${params.CLUSTER} install ${RELEASE_NAME} ${CHART_DIR} --namespace ${KUBE_NAMESPACE} --create-namespace ${valuesArg}"
                         }
                         echo "Installed new Helm release: ${RELEASE_NAME}"
                     }
