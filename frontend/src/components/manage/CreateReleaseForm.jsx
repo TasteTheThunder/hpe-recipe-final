@@ -205,12 +205,6 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
   const [submitting, setSubmitting] = useState(false);
   const [expandedRecipeIds, setExpandedRecipeIds] = useState([]);
   const [availableReleases, setAvailableReleases] = useState([]);
-  const [importOpen, setImportOpen] = useState(false);
-  const [importReleaseVersion, setImportReleaseVersion] = useState('');
-  const [importRecipes, setImportRecipes] = useState([]);
-  const [importRecipeVersion, setImportRecipeVersion] = useState('');
-  const [importLoading, setImportLoading] = useState(false);
-  const [importError, setImportError] = useState(null);
   const [sourceRecipesCache, setSourceRecipesCache] = useState({});
 
   const createEmptyRecipe = () => ({
@@ -244,33 +238,11 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
   const autoReleaseName = cluster ? `recipe-${cluster}` : '';
 
   useEffect(() => {
-    setImportError(null);
-    setImportReleaseVersion('');
-    setImportRecipeVersion('');
-    setImportRecipes([]);
     fetch(`${API_BASE}/helm-releases?cluster=${cluster}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data) => setAvailableReleases(Array.isArray(data) ? data : []))
       .catch(() => setAvailableReleases([]));
   }, [cluster]);
-
-  useEffect(() => {
-    if (!importReleaseVersion) {
-      setImportRecipes([]);
-      return;
-    }
-    setImportLoading(true);
-    setImportError(null);
-    setImportRecipeVersion('');
-    fetch(`${API_BASE}/helm-releases/${importReleaseVersion}?cluster=${cluster}`)
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((data) => setImportRecipes(Array.isArray(data?.recipes) ? data.recipes : []))
-      .catch(() => {
-        setImportError('Failed to load recipes for the selected release');
-        setImportRecipes([]);
-      })
-      .finally(() => setImportLoading(false));
-  }, [importReleaseVersion, cluster]);
 
   const loadSourceRecipes = (releaseVersion) => {
     if (!releaseVersion) return;
@@ -334,68 +306,6 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
     const recipe = createEmptyRecipe();
     setDraftRecipes((prev) => runSourceSync([...prev, recipe]));
     setExpandedRecipeIds((prev) => [...prev, recipe.id]);
-  };
-
-  const importRecipeDraft = () => {
-    if (!importReleaseVersion || !importRecipeVersion) {
-      setImportError('Select a release and recipe to import');
-      return;
-    }
-
-    const recipe = importRecipes.find((r) => r.version === importRecipeVersion);
-    if (!recipe) {
-      setImportError('Selected recipe not found');
-      return;
-    }
-
-    const exists = draftRecipes.some((r) => r.version.trim() === recipe.version);
-    if (exists) {
-      setImportError(`Recipe version ${recipe.version} already exists in this release`);
-      return;
-    }
-
-    const components = Object.entries(recipe.components || {}).map(([name, spec]) => ({
-      name,
-      version: readVersion(spec),
-      releaseDate: spec?.release_date || '',
-      upgradeFrom: readUpgradeList(spec, 'upgrade_from', 'upgradeFrom').join(', '),
-      upgradeTo: readUpgradeList(spec, 'upgrade_to', 'upgradeTo').join(', '),
-      versionTouched: false,
-      upgradeFromTouched: false,
-      upgradeToTouched: false,
-    }));
-
-    const imported = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      version: recipe.version || '',
-      description: recipe.description || '',
-      releaseDate: recipe.release_date || '',
-      status: recipe.status || 'GA',
-      releaseNotes: recipe.release_notes || '',
-      components: components.length > 0 ? components : [
-        {
-          name: '',
-          version: '',
-          releaseDate: '',
-          upgradeFrom: '',
-          upgradeTo: '',
-          versionTouched: false,
-          upgradeFromTouched: false,
-          upgradeToTouched: false,
-        },
-      ],
-      upgradeFrom: Array.isArray(recipe.upgrade_from) ? [...recipe.upgrade_from] : [],
-      upgradeTo: Array.isArray(recipe.upgrade_to) ? [...recipe.upgrade_to] : [],
-      upgradeFromTouched: false,
-      upgradeToTouched: false,
-      sourceReleaseVersion: '',
-      sourceRecipeVersions: [],
-      sourceEnabled: false,
-    };
-
-    setDraftRecipes((prev) => runSourceSync([...prev, imported]));
-    setExpandedRecipeIds((prev) => [...prev, imported.id]);
-    setImportError(null);
   };
 
   const removeRecipeDraft = (id) => {
@@ -692,80 +602,12 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
               <button type="button" onClick={addRecipeDraft} style={{ ...btnSecondary, fontSize: 11, padding: '6px 12px' }}>
                 + Create New Recipe
               </button>
-              <button type="button" onClick={() => setImportOpen((prev) => !prev)} style={{ ...btnSecondary, fontSize: 11, padding: '6px 12px' }}>
-                + Import Existing Recipe
-              </button>
             </div>
           </div>
 
           <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 12 }}>
                 Add at least one recipe version with components.
           </div>
-
-          {importOpen && (
-            <div style={{
-              border: `1px solid ${T.border}`,
-              background: T.bgCard,
-              borderRadius: 10,
-              padding: 12,
-              marginBottom: 12,
-            }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 10, alignItems: 'end' }}>
-                <div>
-                  <label style={labelStyle}>Source Helm Release</label>
-                  <select
-                    style={inputStyle}
-                    value={importReleaseVersion}
-                    onChange={(e) => setImportReleaseVersion(e.target.value)}
-                  >
-                    <option value="">Select release</option>
-                    {availableReleases
-                      .filter((r) => r.version !== version.trim())
-                      .map((r) => (
-                        <option key={r.version} value={r.version}>v{r.version}</option>
-                      ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={labelStyle}>Recipe</label>
-                  <select
-                    style={inputStyle}
-                    value={importRecipeVersion}
-                    onChange={(e) => setImportRecipeVersion(e.target.value)}
-                    disabled={!importReleaseVersion || importLoading}
-                  >
-                    <option value="">
-                      {importLoading ? 'Loading recipes...' : 'Select recipe'}
-                    </option>
-                    {importRecipes.map((r) => (
-                      <option key={r.version} value={r.version}>v{r.version}</option>
-                    ))}
-                  </select>
-                </div>
-                <button type="button" onClick={importRecipeDraft} style={{
-                  ...btnSecondary, fontSize: 11, padding: '6px 12px', height: 34,
-                }}>
-                  Import
-                </button>
-                <button type="button" onClick={() => {
-                  setImportOpen(false);
-                  setImportError(null);
-                  setImportReleaseVersion('');
-                  setImportRecipeVersion('');
-                  setImportRecipes([]);
-                }} style={{
-                  ...btnSecondary, fontSize: 11, padding: '6px 12px', height: 34,
-                }}>
-                  Remove
-                </button>
-              </div>
-              {importError && (
-                <div style={{ marginTop: 8, fontSize: 12, color: T.red }}>
-                  {importError}
-                </div>
-              )}
-            </div>
-          )}
 
               {draftRecipes.length === 0 && (
                 <div style={{
@@ -777,7 +619,7 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
                   background: T.bgCard,
                   marginBottom: 8,
                 }}>
-                  No recipes added yet. Create a new recipe or import from an existing release.
+                  No recipes added yet. Create a new recipe to get started.
                 </div>
               )}
 
