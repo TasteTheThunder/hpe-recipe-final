@@ -1,6 +1,6 @@
 recipeData:
   chartVersion: 9.8.9
-  target_cluster: dev
+  target_cluster: qa
   catalog_name: HPE Analytics Runtime
   catalog_description: okkk
   release_date: '2026-06-12'
