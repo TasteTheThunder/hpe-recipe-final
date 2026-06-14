@@ -4,7 +4,7 @@ pipeline {
     parameters {
         choice(name: 'ALLOW_DEPLOY', choices: ['no', 'yes'], description: 'Must be yes to run Helm deploy. SCM builds default to no.')
         choice(name: 'CLUSTER', choices: ['dev', 'prod', 'qa', 'integration'], description: 'Target cluster for deploy')
-        choice(name: 'ACTION', choices: ['deploy'], description: 'deploy = install/upgrade')
+        choice(name: 'ACTION', choices: ['deploy', 'uninstall'], description: 'deploy = install/upgrade, uninstall = helm uninstall')
         string(name: 'CHART_VERSION', defaultValue: '', description: 'Optional chart version override')
         string(name: 'VALUES_FILE', defaultValue: '', description: 'Optional values file name override (e.g. prod-values.yaml)')
     }
@@ -181,9 +181,25 @@ pipeline {
             }
         }
 
+        stage('Helm Uninstall') {
+            when {
+                expression { params.ALLOW_DEPLOY == 'yes' && params.ACTION == 'uninstall' }
+            }
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh "${HELM_CMD} --kube-context ${params.CLUSTER} uninstall recipe-${params.CLUSTER} --namespace ${KUBE_NAMESPACE} --ignore-not-found"
+                    } else {
+                        bat "${HELM_CMD} --kube-context ${params.CLUSTER} uninstall recipe-${params.CLUSTER} --namespace ${KUBE_NAMESPACE} --ignore-not-found"
+                    }
+                    echo "Uninstalled Helm release recipe-${params.CLUSTER} from ${params.CLUSTER}"
+                }
+            }
+        }
+
         stage('Update Backend Status') {
             when {
-                expression { params.ALLOW_DEPLOY == 'yes' }
+                expression { params.ALLOW_DEPLOY == 'yes' && params.ACTION == 'deploy' }
             }
             steps {
                 script {

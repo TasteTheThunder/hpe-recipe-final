@@ -56,11 +56,18 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
   }, [release.version, release.status]);
 
   const handleDeleteRelease = () => {
-    if (!window.confirm(`Delete Helm release ${release.version}? This removes all its recipes.`)) return;
-    fetch(`${API_BASE}/helm-releases/${release.version}?cluster=${cluster}`, { method: 'DELETE' })
-      .then((r) => {
-        if (!r.ok) throw new Error('Failed to delete');
-        onNotify('Helm release deleted');
+    if (!window.confirm(
+      `Delete catalog version ${release.version}?\n\n`
+      + 'This removes the version from Git and runs "helm uninstall" in every environment '
+      + 'currently running it. This cannot be undone.')) return;
+    fetch(`${API_BASE}/versions/${release.version}`, { method: 'DELETE' })
+      .then(async (r) => {
+        if (!r.ok) {
+          let payload = {};
+          try { payload = await r.json(); } catch { payload = {}; }
+          throw new Error(payload.error || 'Failed to delete');
+        }
+        onNotify('Version deleted; uninstalling from affected environments');
         onRefresh();
       })
       .catch((err) => onNotify(err.message, true));

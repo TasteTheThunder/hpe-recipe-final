@@ -185,6 +185,69 @@ class CatalogPlatformServiceTest {
         assertThat(fresh.readEnvironmentHistory("qa")).containsExactly("0.16", "0.17");
     }
 
+    @Test
+    void deleteVersionUninstallsClearsPointersAndRemovesFile() {
+        RecordingJenkins jenkins = new RecordingJenkins();
+        CatalogPlatformService svc = newPlatform(jenkins);
+        svc.createVersion(sampleRelease("0.16"));
+        svc.deployToDev("0.16");
+        svc.promote("0.16", "qa"); // 0.16 live in dev AND qa
+
+        svc.deleteVersion("0.16");
+
+        assertThat(svc.environments()).doesNotContainKeys("dev", "qa");
+        assertThat(svc.versions()).doesNotContain("0.16");
+        assertThat(jenkins.actions).contains("uninstall:dev:0.16", "uninstall:qa:0.16");
+        assertThat(svc.history()).extracting(e -> e.get("action")).contains("uninstall", "delete");
+    }
+
+    @Test
+    void deleteVersionLiveInTwoEnvsUninstallsBoth() {
+        GitStateService gs = new GitStateService(
+                remoteUri, tmp.resolve("state-clone").toString(), "main", "user", "");
+        RecordingJenkins jenkins = new RecordingJenkins();
+        CatalogPlatformService svc = new CatalogPlatformService(
+                gs, new NoopGitOps(), jenkins, new PromotionProperties());
+        gs.writeVersion(sampleRelease("0.16"));
+        gs.setEnvironmentVersion("integration", "0.16");
+        gs.setEnvironmentVersion("prod", "0.16");
+
+        svc.deleteVersion("0.16");
+
+        assertThat(jenkins.actions).contains("uninstall:integration:0.16", "uninstall:prod:0.16");
+        assertThat(svc.environments()).doesNotContainKeys("integration", "prod");
+        assertThat(svc.versions()).doesNotContain("0.16");
+    }
+
+    @Test
+    void deletingLastVersionReturnsToEmptyState() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+        svc.createVersion(sampleRelease("0.16"));
+        svc.deployToDev("0.16");
+
+        svc.deleteVersion("0.16");
+
+        assertThat(svc.isEmpty()).isTrue();
+        assertThat(svc.versions()).isEmpty();
+    }
+
+    @Test
+    void deletingUnknownVersionIsNoOp() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+        svc.createVersion(sampleRelease("0.16"));
+
+        svc.deleteVersion("9.9"); // exists nowhere
+
+        assertThat(svc.versions()).contains("0.16");
+    }
+
+    @Test
+    void deleteRejectsPathTraversalId() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+        assertThatThrownBy(() -> svc.deleteVersion("../../evil"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     // ---------- helpers / stubs ----------
 
     private CatalogPlatformService newPlatform(RecordingJenkins jenkins) {
@@ -214,6 +277,7 @@ class CatalogPlatformServiceTest {
     /** Records triggers instead of calling Jenkins. */
     static final class RecordingJenkins extends JenkinsService {
         final List<String> triggers = new ArrayList<>();
+        final List<String> actions = new ArrayList<>();
 
         RecordingJenkins() {
             super("user", "token", "http://localhost:8080", "job");
@@ -222,6 +286,7 @@ class CatalogPlatformServiceTest {
         @Override
         public void trigger(String cluster, String action, String chartVersion, String valuesFile) {
             triggers.add(cluster + "@" + chartVersion);
+            actions.add(action + ":" + cluster + ":" + chartVersion);
         }
     }
 

@@ -186,18 +186,21 @@ public class HelmReleaseController {
 
    
     @DeleteMapping("/{version}")
-    public ResponseEntity<Void> deleteHelmRelease(
+    public ResponseEntity<?> deleteHelmRelease(
             @PathVariable String version,
-            @RequestParam String cluster) {
-
-        boolean deleted = helmReleaseService.deleteHelmRelease(cluster, version);
-
-        if (!deleted) return ResponseEntity.notFound().build();
-
-        wsHandler.broadcast("release_deleted",
-                Map.of("version", version, "cluster", cluster));
-
-        return ResponseEntity.noContent().build();
+            @RequestParam(required = false) String cluster) {
+        // Git-backed coherent delete: helm-uninstall from every env running this version,
+        // clear pointers/history, and remove the version file (cluster param kept for the
+        // legacy route but ignored — delete is global). Same logic as DELETE /api/versions/{v}.
+        try {
+            platform.deleteVersion(version);
+            wsHandler.broadcast("release_deleted", Map.of("version", version));
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
+        }
     }
 
     @GetMapping("/{version}/recipes")

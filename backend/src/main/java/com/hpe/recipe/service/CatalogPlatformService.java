@@ -225,6 +225,67 @@ public class CatalogPlatformService {
         return gitState.readVersion(newVersion);
     }
 
+    /**
+     * Delete a catalog version coherently with Git AND the cluster: helm-uninstall it from EVERY
+     * environment currently running it (a version can be live in several at once), clear those env
+     * pointers, scrub the version from every environment history (so rollback can't target it),
+     * remove the version definition file, and log the events. Idempotent: deleting an unknown
+     * version is a no-op. After deleting the last version the system is empty again.
+     */
+    public void deleteVersion(String version) {
+        String v = normalize(version);
+        boolean versionFileExists = gitState.versionExists(v); // validateId guards traversal/blank
+        Map<String, String> envs = gitState.readAllEnvironments();
+
+        // Every environment currently running this version (multi-version-in-flight safe).
+        List<String> affected = new ArrayList<>();
+        for (Map.Entry<String, String> e : envs.entrySet()) {
+            if (v.equals(e.getValue())) {
+                affected.add(e.getKey());
+            }
+        }
+
+        if (affected.isEmpty() && !versionFileExists) {
+            return; // nothing to delete
+        }
+
+        // 1. Uninstall from each environment running it, then clear its pointer + history.
+        for (String env : affected) {
+            try {
+                jenkins.trigger(env, "uninstall", v, null);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to trigger uninstall of " + v + " on " + env
+                        + ": " + e.getMessage(), e);
+            }
+            gitState.deleteEnvironment(env);
+            gitState.setEnvironmentHistory(env, new ArrayList<>()); // env is now empty
+            appendEvent("uninstall", v, env, null);
+        }
+
+        // 2. Scrub the version from any other environment's history (rollback can't point at it).
+        for (String env : pipeline()) {
+            if (affected.contains(env)) {
+                continue;
+            }
+            List<String> hist = gitState.readEnvironmentHistory(env);
+            if (hist.contains(v)) {
+                List<String> trimmed = new ArrayList<>();
+                for (String h : hist) {
+                    if (!v.equals(h)) {
+                        trimmed.add(h);
+                    }
+                }
+                gitState.setEnvironmentHistory(env, trimmed);
+            }
+        }
+
+        // 3. Remove the version definition file, then record the delete.
+        if (versionFileExists) {
+            gitState.deleteVersion(v);
+        }
+        appendEvent("delete", v, null, null);
+    }
+
     // ===================== INTERNALS =====================
 
     /**

@@ -6,6 +6,7 @@ import com.hpe.recipe.service.CatalogPlatformService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -108,6 +109,19 @@ public class PlatformController {
             broadcastDeploying(now, env);
             return Map.of("message", "Rolling back " + env, "version", now == null ? "" : now, "env", env);
         });
+    }
+
+    @DeleteMapping("/versions/{version}")
+    public ResponseEntity<?> deleteVersion(@PathVariable String version) {
+        try {
+            platform.deleteVersion(version);
+            wsHandler.broadcast("release_deleted", Map.of("version", version));
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
+        }
     }
 
     @PostMapping("/catalog/edit")
