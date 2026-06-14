@@ -30,3 +30,8 @@
   version: '0.17'
   env: qa
   fromVersion: dev
+- timestamp: '2026-06-14T00:44:11.338496185Z'
+  action: rollback
+  version: '0.16'
+  env: qa
+  fromVersion: '0.17'
