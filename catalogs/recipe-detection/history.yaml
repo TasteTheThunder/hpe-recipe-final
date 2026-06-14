@@ -35,3 +35,8 @@
   version: '0.16'
   env: qa
   fromVersion: '0.17'
+- timestamp: '2026-06-14T01:12:54.203306193Z'
+  action: promote
+  version: '0.17'
+  env: qa
+  fromVersion: dev
