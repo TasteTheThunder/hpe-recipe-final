@@ -1,6 +1,6 @@
 recipeData:
   chartVersion: '0.17'
-  target_cluster: qa
+  target_cluster: integration
   release_date: '2026-06-15'
   catalog_status: GA
   maintainer: Aditya

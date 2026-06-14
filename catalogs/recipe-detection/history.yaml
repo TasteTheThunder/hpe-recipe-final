@@ -35,3 +35,20 @@
   version: '0.16'
   env: qa
   fromVersion: '0.17'
+- timestamp: '2026-06-14T01:12:54.203306193Z'
+  action: promote
+  version: '0.17'
+  env: qa
+  fromVersion: dev
+- timestamp: '2026-06-14T01:14:40.543792215Z'
+  action: promote
+  version: '0.17'
+  env: integration
+  fromVersion: qa
+- timestamp: '2026-06-14T01:15:53.187563298Z'
+  action: uninstall
+  version: '0.16'
+  env: prod
+- timestamp: '2026-06-14T01:16:05.714118523Z'
+  action: delete
+  version: '0.16'
