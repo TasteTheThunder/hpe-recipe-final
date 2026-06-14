@@ -107,8 +107,11 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
       transition: 'all 0.2s',
     }}>
       {/* Release header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer', flex: 1 }}
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end',
+        alignItems: 'center', gap: 12,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer', flex: '1 1 auto', minWidth: 0 }}
           onClick={() => setExpanded(!expanded)}>
           <div style={{
             width: 44, height: 44, borderRadius: 10,
@@ -156,7 +159,10 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
             transition: 'transform 0.2s',
           }}>▼</span>
         </div>
-        <div style={{ display: 'flex', gap: 8, marginLeft: 12 }}>
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end',
+          alignItems: 'center', gap: 8,
+        }}>
           {isDevCatalog && (
             <button onClick={handleEditCatalog} style={{
               ...btnSecondary, padding: '6px 14px', fontSize: 12,
@@ -204,7 +210,7 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
               Rollback {env.toUpperCase()}
             </button>
           ))}
-          <button onClick={handleDeleteRelease} style={btnDanger}>Delete</button>
+          <button onClick={handleDeleteRelease} style={{ ...btnDanger, padding: '6px 14px', fontSize: 12, borderRadius: 8 }}>Delete</button>
         </div>
       </div>
 

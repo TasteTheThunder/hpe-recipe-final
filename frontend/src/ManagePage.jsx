@@ -253,11 +253,14 @@ export default function ManagePage() {
         {versionCount !== null && versionCount > 0 && (
           <div style={{
             ...cardStyle, marginBottom: 16, fontSize: 13, color: T.textMuted,
-            display: 'flex', alignItems: 'center', gap: 8,
+            display: 'flex', alignItems: 'flex-start', gap: 10,
           }}>
-            <span style={{ fontSize: 16 }}>✎</span>
-            A catalog already exists. New versions are created by editing the <strong style={{ color: T.text }}>DEV</strong> catalog
-            (each edit forks a new version); other environments receive versions via promotion.
+            <span style={{ fontSize: 16, flexShrink: 0, lineHeight: 1.5 }}>✎</span>
+            <span style={{ lineHeight: 1.5 }}>
+              A catalog already exists. New versions are created by editing the{' '}
+              <strong style={{ color: T.text }}>DEV</strong> catalog (each edit forks a new version);
+              other environments receive versions via promotion.
+            </span>
           </div>
         )}
 
