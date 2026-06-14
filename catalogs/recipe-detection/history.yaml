@@ -32,3 +32,8 @@
   version: 0.0.1
   env: qa
   fromVersion: 0.0.2
+- timestamp: '2026-06-14T09:26:00.446941565Z'
+  action: edit
+  version: 0.0.3
+  env: dev
+  fromVersion: 0.0.2
