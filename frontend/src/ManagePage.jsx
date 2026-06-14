@@ -8,44 +8,74 @@ import CreateReleaseForm from './components/manage/CreateReleaseForm';
 import ReleaseCard from './components/manage/ReleaseCard';
 
 const API_BASE = '/api';
+const DEFAULT_PIPELINE = ['dev', 'qa', 'integration', 'prod'];
 
 // ============================================================================
 // Main Manage Page
 // ============================================================================
 export default function ManagePage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const allowedClusters = ['dev', 'prod', 'qa', 'integration'];
-  const initialCluster = allowedClusters.includes(searchParams.get('cluster'))
+  // Pipeline order is the source of truth for valid clusters — fetched, not hardcoded.
+  const [pipeline, setPipeline] = useState(DEFAULT_PIPELINE);
+  const allowedClusters = pipeline;
+  const initialCluster = DEFAULT_PIPELINE.includes(searchParams.get('cluster'))
     ? searchParams.get('cluster')
     : 'dev';
   const [cluster, setCluster] = useState(initialCluster);
   const { helmReleases: releases, loading, error, lastEvent, refetch } = useRealtimeReleases(cluster);
   const [toast, setToast] = useState(null);
+  // Git-backed platform state: how many catalog versions exist (drives create-only-when-empty),
+  // and the deployment event log.
+  const [versionCount, setVersionCount] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/pipeline`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (Array.isArray(data) && data.length) setPipeline(data); })
+      .catch(() => { /* keep default */ });
+  }, []);
+
+  const refreshPlatform = () => {
+    fetch(`${API_BASE}/versions`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setVersionCount(Array.isArray(data) ? data.length : 0))
+      .catch(() => setVersionCount(null));
+    fetch(`${API_BASE}/history`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setHistory(Array.isArray(data) ? data : []))
+      .catch(() => setHistory([]));
+  };
+
+  useEffect(() => { refreshPlatform(); }, []);
 
   useEffect(() => {
     const urlCluster = allowedClusters.includes(searchParams.get('cluster'))
       ? searchParams.get('cluster')
-      : 'dev';
+      : allowedClusters[0];
     setCluster((prev) => (prev === urlCluster ? prev : urlCluster));
-  }, [searchParams]);
+  }, [searchParams, pipeline]);
 
   useEffect(() => {
     const urlCluster = allowedClusters.includes(searchParams.get('cluster'))
       ? searchParams.get('cluster')
-      : 'dev';
+      : allowedClusters[0];
     if (urlCluster !== cluster) {
       const next = new URLSearchParams(searchParams);
       next.set('cluster', cluster);
       setSearchParams(next, { replace: true });
     }
-  }, [cluster, searchParams, setSearchParams, allowedClusters]);
+  }, [cluster, searchParams, setSearchParams, pipeline]);
 
-  // Show toast on realtime events from other users/Jenkins
+  // Show toast on realtime events + keep platform state fresh.
   useEffect(() => {
     if (!lastEvent) return;
+    refreshPlatform();
     const eventLabels = {
       status_changed: `Release ${lastEvent.data?.version} → ${lastEvent.data?.status}`,
       release_created: `New release ${lastEvent.data?.version} created`,
+      version_created: `New catalog version ${lastEvent.data?.version} created`,
       release_deleted: `Release ${lastEvent.data?.version} deleted`,
       recipe_added: `Recipe added to ${lastEvent.data?.helmVersion}`,
       recipe_updated: `Recipe updated in ${lastEvent.data?.helmVersion}`,
@@ -59,7 +89,7 @@ export default function ManagePage() {
     setToast({ message, type: isError ? 'error' : 'success' });
   };
 
-  const refresh = () => refetch();
+  const refresh = () => { refetch(); refreshPlatform(); };
 
   async function deployRelease(version, targetCluster) {
     const deployCluster = targetCluster || cluster;
@@ -68,11 +98,7 @@ export default function ManagePage() {
     });
 
     let payload = {};
-    try {
-      payload = await response.json();
-    } catch {
-      payload = {};
-    }
+    try { payload = await response.json(); } catch { payload = {}; }
 
     if (!response.ok) {
       const message = payload.error || `Deploy failed for ${version}`;
@@ -86,6 +112,30 @@ export default function ManagePage() {
     refresh();
     return payload;
   }
+
+  // Rollback an environment one step to its previous version (QA/INTEGRATION/PROD only).
+  // Confirmation here because it changes real cluster state.
+  async function rollbackEnv(env) {
+    if (!window.confirm(
+      `Roll back ${env.toUpperCase()} to its previous version?\n\n`
+      + `This redeploys the older version into the ${env} namespace.`)) {
+      return;
+    }
+    const response = await fetch(`${API_BASE}/environments/${env}/rollback`, { method: 'POST' });
+    let payload = {};
+    try { payload = await response.json(); } catch { payload = {}; }
+    if (!response.ok) {
+      const message = payload.error || `Rollback failed for ${env}`;
+      notify(message, true);
+      window.alert(message);
+      return;
+    }
+    notify(payload.message || `Rolled back ${env.toUpperCase()}`);
+    refresh();
+  }
+
+  const pipelineLabel = pipeline.map((p) => p.toUpperCase()).join(' → ');
+  const isEmptySystem = versionCount === 0;
 
   return (
     <div style={{
@@ -120,10 +170,9 @@ export default function ManagePage() {
             ...btnSecondary,
             padding: '7px 10px',
           }}>
-            <option value="dev">DEV</option>
-            <option value="prod">PROD</option>
-            <option value="qa">QA</option>
-            <option value="integration">INTEGRATION</option>
+            {pipeline.map((c) => (
+              <option key={c} value={c}>{c.toUpperCase()}</option>
+            ))}
           </select>
           <span style={{ display: 'flex', alignItems: 'center', fontSize: 12, color: T.textMuted, whiteSpace: 'nowrap' }}>
             Viewing: {cluster.toUpperCase()}
@@ -132,8 +181,11 @@ export default function ManagePage() {
             fontSize: 11, color: T.teal, padding: '4px 10px', borderRadius: 6,
             background: `${T.teal}12`, border: `1px solid ${T.teal}33`, whiteSpace: 'nowrap',
           }}>
-            Pipeline: DEV → QA → INTEGRATION → PROD
+            Pipeline: {pipelineLabel}
           </span>
+          <button onClick={() => setShowHistory((s) => !s)} style={btnSecondary}>
+            {showHistory ? 'Hide History' : 'History'}
+          </button>
           <Link to={`/?cluster=${cluster}`} style={{
             ...btnSecondary, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6,
           }}>
@@ -152,16 +204,31 @@ export default function ManagePage() {
 
       {/* Content */}
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px' }}>
-        {/* Create new release */}
-        <CreateReleaseForm onCreated={(msg, isError) => {
-          notify(msg, isError);
-          if (!isError) refresh();
-        }} cluster={cluster} />
+        {showHistory && <DeploymentHistory history={history} />}
+
+        {/* Create is available only on an empty system (cold start). Otherwise edit the dev
+            catalog, which forks a new version. */}
+        {isEmptySystem && (
+          <CreateReleaseForm onCreated={(msg, isError) => {
+            notify(msg, isError);
+            if (!isError) refresh();
+          }} cluster={cluster} />
+        )}
+        {versionCount !== null && versionCount > 0 && (
+          <div style={{
+            ...cardStyle, marginBottom: 16, fontSize: 13, color: T.textMuted,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 16 }}>✎</span>
+            A catalog already exists. New versions are created by editing the <strong style={{ color: T.text }}>DEV</strong> catalog
+            (each edit forks a new version); other environments receive versions via promotion.
+          </div>
+        )}
 
         {/* Existing releases */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, marginTop: 8 }}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: T.text }}>
-            Helm Releases
+            Catalog Versions
           </h2>
           <span style={{
             padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 600,
@@ -179,8 +246,8 @@ export default function ManagePage() {
             border: `1px dashed ${T.border}`,
           }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📦</div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>No releases yet</div>
-            <div style={{ fontSize: 13, color: T.textMuted }}>Create your first Helm release above to get started.</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>No versions yet</div>
+            <div style={{ fontSize: 13, color: T.textMuted }}>Create your first catalog version above to get started.</div>
           </div>
         )}
 
@@ -192,7 +259,49 @@ export default function ManagePage() {
             onRefresh={refresh}
             onNotify={notify}
             onDeploy={deployRelease}
+            onRollback={rollbackEnv}
           />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Deployment History — reads the Git-backed event log (GET /api/history)
+// ============================================================================
+function DeploymentHistory({ history }) {
+  const actionColor = {
+    create: T.textMuted,
+    deploy: T.blue,
+    promote: T.teal,
+    rollback: T.yellow,
+    edit: T.blue,
+  };
+  const ordered = [...history].reverse(); // newest first
+  return (
+    <div style={{ ...cardStyle, marginBottom: 16 }}>
+      <h3 style={{ margin: '0 0 12px', fontSize: 15, color: T.text }}>Deployment History</h3>
+      {ordered.length === 0 && (
+        <div style={{ fontSize: 13, color: T.textMuted }}>No events recorded yet.</div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {ordered.map((e, i) => (
+          <div key={`${e.timestamp || ''}-${i}`} style={{
+            display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
+            padding: '6px 10px', borderRadius: 6, background: T.bgSurface,
+            border: `1px solid ${T.border}`,
+          }}>
+            <span style={{
+              padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+              background: `${actionColor[e.action] || T.textMuted}22`,
+              color: actionColor[e.action] || T.textMuted, minWidth: 70, textAlign: 'center',
+            }}>{e.action}</span>
+            <span style={{ color: T.text, fontWeight: 600 }}>v{e.version}</span>
+            {e.env && <span style={{ color: T.textMuted }}>→ {String(e.env).toUpperCase()}</span>}
+            {e.fromVersion && <span style={{ color: T.textMuted }}>(from {e.fromVersion})</span>}
+            <span style={{ marginLeft: 'auto', color: T.textMuted }}>{e.timestamp || ''}</span>
+          </div>
         ))}
       </div>
     </div>

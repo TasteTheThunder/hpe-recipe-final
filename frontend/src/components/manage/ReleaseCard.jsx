@@ -16,7 +16,7 @@ const API_BASE = '/api';
 
 const readVersion = (spec) => (typeof spec === 'string' ? spec : (spec?.version || ''));
 
-export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onNotify }) {
+export default function ReleaseCard({ release, onDeploy, onRollback, cluster, onRefresh, onNotify }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState(null);
   const [editingRecipe, setEditingRecipe] = useState(null);
@@ -49,7 +49,7 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
   }, [expanded, release.version, cluster]);
 
   useEffect(() => {
-    fetch(`${API_BASE}/helm-releases/${release.version}/promotion-options`)
+    fetch(`${API_BASE}/versions/${release.version}/promotion-options`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => setPromotion(data))
       .catch(() => setPromotion(null));
@@ -194,6 +194,9 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
     : ['pending', 'failed', 'push_failed'].includes(displayStatus);
   const pipeline = promotion?.pipeline || ['dev', 'qa', 'integration', 'prod'];
   const deployedOn = promotion?.deployedOn || {};
+  const canRollback = promotion?.canRollback || {};
+  // Environments (past the first stage) where THIS version is live and a previous version exists.
+  const rollbackEnvs = pipeline.filter((env, idx) => idx > 0 && deployedOn[env] && canRollback[env]);
 
   const handleConfirmDeploy = (version) => onDeploy(version, deployTarget);
 
@@ -289,6 +292,16 @@ export default function ReleaseCard({ release, onDeploy, cluster, onRefresh, onN
               <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
             </span>
           )}
+          {rollbackEnvs.map((env) => (
+            <button
+              key={`rollback-${env}`}
+              onClick={() => onRollback && onRollback(env)}
+              style={{ ...btnSecondary, padding: '6px 14px', fontSize: 12 }}
+              title={`Roll ${env.toUpperCase()} back to its previous version`}
+            >
+              Rollback {env.toUpperCase()}
+            </button>
+          ))}
           <button onClick={handleDeleteRelease} style={btnDanger}>Delete</button>
         </div>
       </div>

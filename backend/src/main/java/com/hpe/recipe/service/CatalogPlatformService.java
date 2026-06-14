@@ -105,6 +105,9 @@ public class CatalogPlatformService {
         result.put("deployedOn", deployedOn);
         result.put("activeVersionOnCluster", activeVersions);
         result.put("allowedTargets", allowedTargets);
+        if (!allowedTargets.isEmpty()) {
+            result.put("nextTarget", allowedTargets.get(0));
+        }
         result.put("canRollback", canRollback);
         return result;
     }
