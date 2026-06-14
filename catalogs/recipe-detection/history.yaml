@@ -50,3 +50,8 @@
 - timestamp: '2026-06-14T14:27:43.306052472Z'
   action: delete
   version: 0.0.2
+- timestamp: '2026-06-14T15:28:51.069664427Z'
+  action: promote
+  version: 0.0.3
+  env: integration
+  fromVersion: qa
