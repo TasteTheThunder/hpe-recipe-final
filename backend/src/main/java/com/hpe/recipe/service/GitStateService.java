@@ -6,6 +6,7 @@ import org.eclipse.jgit.api.ResetCommand;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.yaml.snakeyaml.DumperOptions;
@@ -25,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -43,10 +45,15 @@ import java.util.stream.Collectors;
  *   history.yaml                 [ {timestamp, action, version, env, actor, fromVersion?}, ... ]
  * </pre>
  *
- * Every read/mutate hard-syncs the local clone to the remote branch first, so backend
- * restarts or ConfigMap wipes never lose state — Git is authoritative. Push-bearing work is
- * serialized with {@link GitOpsService} via {@link GitSupport#REMOTE_LOCK} and verified +
- * retried so a concurrent push to the shared branch can't silently drop a state write.
+ * Mutates always hard-sync the local clone to the remote branch first (so a write lands on top
+ * of the latest state); reads hard-sync only when the cached clone is older than a short TTL
+ * ({@code gitops.state-cache-ttl-seconds}), otherwise they are served from the local clone with
+ * no network round-trip — this removes the per-read GitHub fetch that made the UI laggy. Git
+ * stays authoritative either way: a fresh service (e.g. after a backend restart) has an empty
+ * cache and syncs on its first read, and every mutate refreshes the window so this backend's own
+ * writes are always visible immediately. Push-bearing work is serialized with {@link GitOpsService}
+ * via {@link GitSupport#REMOTE_LOCK} and verified + retried so a concurrent push to the shared
+ * branch can't silently drop a state write.
  */
 @Service
 public class GitStateService {
@@ -60,6 +67,8 @@ public class GitStateService {
     private static final String ENV_HISTORY_DIR = BASE + "/environment-history";
     private static final String HISTORY_FILE = BASE + "/history.yaml";
     private static final int MAX_PUSH_ATTEMPTS = 3;
+    /** Default state-cache TTL (seconds) when {@code gitops.state-cache-ttl-seconds} is unset. */
+    private static final long DEFAULT_STATE_CACHE_TTL_SECONDS = 8;
 
     private final String repoUrl;
     private final String localPath;
@@ -67,17 +76,40 @@ public class GitStateService {
     private final String username;
     private final String token;
 
+    /**
+     * How long a remote sync stays "fresh": within this window reads are served from the local
+     * clone with no GitHub fetch. A few seconds trades a small cross-process staleness for the
+     * elimination of a network round-trip on every read — changes made by THIS backend are always
+     * visible immediately because each mutate refreshes the window. Configurable via
+     * {@code gitops.state-cache-ttl-seconds}.
+     */
+    private final long stateCacheTtlMillis;
+    /** Wall-clock millis of the last successful remote sync; 0 = never (first read always syncs). */
+    private volatile long lastSyncedAtMillis = 0L;
+    /** Count of real remote syncs (fetch+reset) performed — observable by tests. */
+    private final AtomicLong remoteSyncCount = new AtomicLong(0);
+
+    /** Spring wiring: cache TTL comes from {@code gitops.state-cache-ttl-seconds} (default 8s). */
+    @Autowired
     public GitStateService(
             @Value("${gitops.repo-url}") String repoUrl,
             @Value("${gitops.state-path}") String localPath,
             @Value("${gitops.branch}") String branch,
             @Value("${gitops.username}") String username,
-            @Value("${gitops.token}") String token) {
+            @Value("${gitops.token}") String token,
+            @Value("${gitops.state-cache-ttl-seconds:8}") long stateCacheTtlSeconds) {
         this.repoUrl = repoUrl;
         this.localPath = localPath;
         this.branch = branch;
         this.username = username;
         this.token = token;
+        this.stateCacheTtlMillis = Math.max(0L, stateCacheTtlSeconds) * 1000L;
+    }
+
+    /** Convenience constructor (tests / programmatic use): uses the default cache TTL. */
+    public GitStateService(String repoUrl, String localPath, String branch,
+                           String username, String token) {
+        this(repoUrl, localPath, branch, username, token, DEFAULT_STATE_CACHE_TTL_SECONDS);
     }
 
     // ===================== VERSIONS =====================
@@ -194,6 +226,26 @@ public class GitStateService {
         return read(repo -> loadStringList(new File(repo, ENV_HISTORY_DIR + "/" + e + ".yaml")));
     }
 
+    /**
+     * Histories for several environments in ONE synced read, instead of one {@link #read} per env.
+     * Returns env -&gt; ordered history (absent/empty files map to an empty list). Lets callers that
+     * need the whole pipeline's histories at once (e.g. promotion options) avoid re-opening and
+     * re-syncing the clone per environment.
+     */
+    public Map<String, List<String>> readEnvironmentHistories(List<String> envs) {
+        List<String> validated = new ArrayList<>();
+        for (String env : envs) {
+            validated.add(validateId("environment", env));
+        }
+        return read(repo -> {
+            Map<String, List<String>> result = new LinkedHashMap<>();
+            for (String e : validated) {
+                result.put(e, loadStringList(new File(repo, ENV_HISTORY_DIR + "/" + e + ".yaml")));
+            }
+            return result;
+        });
+    }
+
     public void appendEnvironmentHistory(String env, String version) {
         String e = validateId("environment", env);
         String v = validateId("version", version);
@@ -237,7 +289,7 @@ public class GitStateService {
     private <T> T read(Function<File, T> reader) {
         synchronized (GitSupport.REMOTE_LOCK) {
             try (Git git = openOrClone()) {
-                syncToRemote(git);
+                syncIfStale(git); // TTL-gated: no GitHub fetch when the local clone is still fresh
                 return reader.apply(new File(localPath));
             } catch (Exception e) {
                 throw new RuntimeException("Git state read failed: " + e.getMessage(), e);
@@ -259,6 +311,7 @@ public class GitStateService {
                     git.add().addFilepattern(BASE).call();
                     git.add().setUpdate(true).addFilepattern(BASE).call();
                     if (git.status().call().isClean()) {
+                        markSynced(); // synced + nothing to write -> local == remote; reads can skip re-fetch
                         return;
                     }
                     git.commit()
@@ -268,6 +321,7 @@ public class GitStateService {
                             .call();
                     var results = git.push().setCredentialsProvider(creds()).call();
                     if (GitSupport.pushAccepted(results)) {
+                        markSynced(); // our push advanced remote to local; reads reflect it without re-fetch
                         return;
                     }
                     if (attempt >= MAX_PUSH_ATTEMPTS) {
@@ -302,14 +356,44 @@ public class GitStateService {
     }
 
     /**
+     * Sync the working clone to the remote branch only if the cached state is older than the TTL.
+     * Within the TTL window this is a no-op (no network), which is what removes the per-read GitHub
+     * fetch. A brand-new service (lastSyncedAtMillis = 0) is always stale on its first read, so a
+     * restart re-syncs immediately and Git stays authoritative.
+     */
+    private void syncIfStale(Git git) throws Exception {
+        if (nowMillis() - lastSyncedAtMillis > stateCacheTtlMillis) {
+            syncToRemote(git);
+        }
+    }
+
+    /**
      * Hard-sync the working clone to the remote branch so reads/writes start from truth, then
      * clean any untracked leftovers under BASE (e.g. a file written by a mutate that failed
-     * before commit) so they can't be re-staged into a later unrelated commit.
+     * before commit) so they can't be re-staged into a later unrelated commit. Refreshes the
+     * freshness window so immediately-following reads don't re-fetch.
      */
     private void syncToRemote(Git git) throws Exception {
         git.fetch().setCredentialsProvider(creds()).call();
         git.reset().setMode(ResetCommand.ResetType.HARD).setRef("origin/" + branch).call();
         git.clean().setCleanDirectories(true).setForce(true).setPaths(Set.of(BASE)).call();
+        remoteSyncCount.incrementAndGet();
+        markSynced();
+    }
+
+    /** Mark the local clone fresh as of now (after a sync, or after our own mutate pushed). */
+    private void markSynced() {
+        lastSyncedAtMillis = nowMillis();
+    }
+
+    /** Wall-clock millis; overridable in tests to exercise TTL expiry deterministically. */
+    protected long nowMillis() {
+        return System.currentTimeMillis();
+    }
+
+    /** Number of real remote syncs performed so far — for tests asserting the cache is used. */
+    long remoteSyncCountForTest() {
+        return remoteSyncCount.get();
     }
 
     private UsernamePasswordCredentialsProvider creds() {

@@ -75,7 +75,10 @@ public class CatalogPlatformService {
     public Map<String, Object> promotionOptions(String version) {
         String v = normalize(version);
         List<String> pipeline = pipeline();
+        // Read the whole state this view needs ONCE per request (the env map + every env's history)
+        // instead of issuing a separate synced read per environment inside the loop below.
         Map<String, String> envs = gitState.readAllEnvironments();
+        Map<String, List<String>> histories = gitState.readEnvironmentHistories(pipeline);
 
         Map<String, Boolean> deployedOn = new LinkedHashMap<>();
         Map<String, String> activeVersions = new LinkedHashMap<>();
@@ -85,7 +88,8 @@ public class CatalogPlatformService {
             String active = envs.get(env);
             activeVersions.put(env, active != null ? active : "");
             deployedOn.put(env, v.equals(active));
-            canRollback.put(env, i > 0 && gitState.readEnvironmentHistory(env).size() >= 2);
+            List<String> hist = histories.getOrDefault(env, List.of());
+            canRollback.put(env, i > 0 && hist.size() >= 2);
         }
 
         // Forward-only: a version advances from the FURTHEST stage it currently occupies, one

@@ -162,6 +162,57 @@ class GitStateServiceTest {
                 .isEqualTo("3.50");
     }
 
+    // ---------- state cache (perf: reads don't fetch from the remote every time) ----------
+
+    @Test
+    void readReflectsOwnWriteWithoutRefetching() {
+        GitStateService svc = newService("clone-a");
+        svc.setEnvironmentVersion("dev", "v0.16"); // mutate: syncs, pushes, refreshes the cache window
+        long syncsAfterWrite = svc.remoteSyncCountForTest();
+
+        // The very next read must reflect our own write (no stale-after-own-write)...
+        assertThat(svc.readEnvironmentVersion("dev")).isEqualTo("v0.16");
+        // ...and must NOT have triggered another remote fetch (served from the fresh local clone).
+        assertThat(svc.remoteSyncCountForTest()).isEqualTo(syncsAfterWrite);
+    }
+
+    @Test
+    void readsWithinTtlAreServedLocallyWithoutRefetching() {
+        newService("clone-writer").writeVersion(sampleRelease("v0.16")); // populate the remote
+
+        GitStateService reader = newService("clone-reader"); // fresh instance: empty cache
+        assertThat(reader.remoteSyncCountForTest()).isZero();
+
+        assertThat(reader.listVersions()).containsExactly("v0.16"); // first read -> exactly one sync
+        assertThat(reader.remoteSyncCountForTest()).isEqualTo(1);
+
+        // Further reads within the (default 8s) TTL window must not hit the network again.
+        reader.readEnvironmentVersion("dev");
+        reader.readHistory();
+        reader.listVersions();
+        assertThat(reader.remoteSyncCountForTest()).isEqualTo(1);
+    }
+
+    @Test
+    void readAfterTtlExpiryRefetches() {
+        long[] clock = { 1_000_000L };
+        GitStateService svc = new GitStateService(
+                remoteUri, tmp.resolve("clone-clock").toString(), "main", "user", "") {
+            @Override
+            protected long nowMillis() {
+                return clock[0];
+            }
+        };
+
+        svc.listVersions(); // first read -> sync #1
+        svc.listVersions(); // same instant, within TTL -> still one sync
+        assertThat(svc.remoteSyncCountForTest()).isEqualTo(1);
+
+        clock[0] += 9_000L; // advance past the default 8s TTL
+        svc.listVersions(); // now stale -> sync #2
+        assertThat(svc.remoteSyncCountForTest()).isEqualTo(2);
+    }
+
     private void writeRawToRemote(String repoRelativePath, String content) throws Exception {
         File work = tmp.resolve("raw-clone").toFile();
         try (Git g = Git.cloneRepository().setURI(remoteUri).setDirectory(work).setBranch("main").call()) {

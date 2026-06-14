@@ -21,6 +21,11 @@ gitops:
   token: ${GIT_TOKEN:}
   values-dir: helm/recipe-detection-chart
   state-path: ${java.io.tmpdir}/hpe-recipe-gitstate
+  # How long Git state stays cached before a read re-fetches from the remote. Reads within this
+  # window are served from the local clone (no GitHub round-trip), which is what keeps the UI
+  # responsive. Mutations always sync first, so changes made by this backend are visible at once;
+  # only changes pushed by a different process can lag by up to this many seconds.
+  state-cache-ttl-seconds: ${GITOPS_STATE_CACHE_TTL_SECONDS:8}
 
 promotion:
   pipeline: dev,qa,integration,prod
