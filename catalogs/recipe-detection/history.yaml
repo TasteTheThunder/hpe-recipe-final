@@ -64,3 +64,6 @@
   action: uninstall
   version: '0.17'
   env: integration
+- timestamp: '2026-06-14T06:33:14.084797615Z'
+  action: delete
+  version: '0.17'
