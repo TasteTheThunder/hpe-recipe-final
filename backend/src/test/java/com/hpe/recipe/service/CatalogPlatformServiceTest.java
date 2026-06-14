@@ -135,6 +135,42 @@ class CatalogPlatformServiceTest {
     }
 
     @Test
+    void editingDevPromotesPreviousVersionOneStageToNextEnv() {
+        RecordingJenkins jenkins = new RecordingJenkins();
+        CatalogPlatformService svc = newPlatform(jenkins);
+        svc.createVersion(sampleRelease("0.0.1"));
+        svc.deployToDev("0.0.1");
+        svc.promote("0.0.1", "qa");
+        svc.promote("0.0.1", "integration");
+        svc.promote("0.0.1", "prod");          // every environment running 0.0.1
+
+        // First edit: dev 0.0.1 -> 0.0.2. The previous dev version (0.0.1) is already on qa,
+        // so qa is unchanged and nothing cascades.
+        svc.editDev(sampleRelease("ignored")); // forks 0.0.2 onto dev
+        assertThat(svc.environments())
+                .containsEntry("dev", "0.0.2")
+                .containsEntry("qa", "0.0.1")
+                .containsEntry("integration", "0.0.1")
+                .containsEntry("prod", "0.0.1");
+
+        // Second edit: dev 0.0.2 -> 0.0.3. Now the superseded dev version (0.0.2) moves forward
+        // one stage to qa, replacing qa's 0.0.1. Integration and prod stay put (manual promote only).
+        svc.editDev(sampleRelease("ignored")); // forks 0.0.3 onto dev
+        assertThat(svc.environments())
+                .containsEntry("dev", "0.0.3")
+                .containsEntry("qa", "0.0.2")
+                .containsEntry("integration", "0.0.1")
+                .containsEntry("prod", "0.0.1");
+
+        // qa was redeployed with the moved version...
+        assertThat(jenkins.triggers).contains("qa@0.0.2");
+        // ...and qa keeps an ordered history so a one-step rollback (0.0.2 -> 0.0.1) still works.
+        GitStateService fresh = new GitStateService(
+                remoteUri, tmp.resolve("verify-clone").toString(), "main", "user", "");
+        assertThat(fresh.readEnvironmentHistory("qa")).containsExactly("0.0.1", "0.0.2");
+    }
+
+    @Test
     void nextTargetAdvancesForwardFromFurthestStage() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));

@@ -198,14 +198,26 @@ const syncAllDraftSourceLinks = (drafts, cache) => {
 
     const linkedDests = destsByLocalSourceVersion.get(sourceVersion) || [];
 
-    if (!sourceDraft.upgradeToTouched) {
-      sourceDraft.upgradeTo = [...new Set(
-        linkedDests.map((d) => normalizeVersion(d.version)).filter(Boolean),
-      )];
-    }
+    // Source-seeding link (recipe level). Coerce every operand to clean version tokens BEFORE
+    // spreading (never spread a raw string char-by-char), and REPLACE the previous auto-linked
+    // versions with the current ones instead of accumulating them — otherwise the partial versions
+    // captured while the destination version is being typed (1, 1., 1.3, …) pile up forever.
+    // Genuine values (loaded or user-typed) are preserved via `recipeBase`; `upgradeToAuto` is
+    // bookkeeping of the last auto-link set, carried along by the existing draft spreads.
+    const existingRecipeTo = Array.isArray(sourceDraft.upgradeTo)
+      ? sourceDraft.upgradeTo.map(String)
+      : parseUpgradeList(sourceDraft.upgradeTo);
+    const prevRecipeAuto = Array.isArray(sourceDraft.upgradeToAuto) ? sourceDraft.upgradeToAuto : [];
+    const recipeLinkTokens = linkedDests
+      .map((d) => normalizeVersion(d.version))
+      .filter(Boolean);
+    const recipeBase = existingRecipeTo.filter((v) => !prevRecipeAuto.includes(v));
+    sourceDraft.upgradeTo = [...new Set(
+      [...recipeBase, ...recipeLinkTokens].map((s) => String(s).trim()).filter(Boolean),
+    )];
+    sourceDraft.upgradeToAuto = recipeLinkTokens;
 
     sourceDraft.components.forEach((srcComp) => {
-      if (srcComp.upgradeToTouched) return;
       const name = String(srcComp.name || '').trim();
       if (!name) return;
 
@@ -214,7 +226,14 @@ const syncAllDraftSourceLinks = (drafts, cache) => {
         .map((c) => String(c.version || '').trim())
         .filter(Boolean);
 
-      srcComp.upgradeTo = [...new Set(autoTos)].join(', ');
+      // Same discipline for the per-component upgradeTo, which is a comma-separated STRING: parse
+      // it to an array (never char-spread), drop the previous auto-links, union the current ones,
+      // and store back as a string. Real/user component values are preserved via `compBase`.
+      const existingCompTo = parseUpgradeList(srcComp.upgradeTo);
+      const prevCompAuto = Array.isArray(srcComp.upgradeToAuto) ? srcComp.upgradeToAuto : [];
+      const compBase = existingCompTo.filter((v) => !prevCompAuto.includes(v));
+      srcComp.upgradeTo = [...new Set([...compBase, ...autoTos])].join(', ');
+      srcComp.upgradeToAuto = autoTos;
     });
   });
 

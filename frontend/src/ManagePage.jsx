@@ -148,6 +148,9 @@ export default function ManagePage() {
 
   const pipelineLabel = pipeline.map((p) => p.toUpperCase()).join(' → ');
   const isEmptySystem = versionCount === 0;
+  // The environment view shows only the version currently deployed in the selected cluster
+  // (status 'deployed' == the env's current pointer). Every version stays visible in History.
+  const deployedReleases = releases.filter((r) => r.status === 'deployed');
 
   return (
     <div style={{
@@ -264,33 +267,46 @@ export default function ManagePage() {
           </div>
         )}
 
-        {/* Existing releases */}
+        {/* Deployed version for the selected environment (one at most). Full history is in History. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, marginTop: 8 }}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: T.text }}>
-            Catalog Versions
+            Deployed in {cluster.toUpperCase()}
           </h2>
           <span style={{
             padding: '2px 10px', borderRadius: 10, fontSize: 12, fontWeight: 600,
             background: `${T.teal}18`, color: T.teal,
-          }}>{releases.length}</span>
+          }}>{deployedReleases.length}</span>
         </div>
 
         {loading && (
           <div style={{ textAlign: 'center', padding: 40, color: T.textMuted }}>Loading...</div>
         )}
 
-        {!loading && releases.length === 0 && (
+        {!loading && deployedReleases.length === 0 && (
           <div style={{
             ...cardStyle, textAlign: 'center', padding: 40,
             border: `1px dashed ${T.border}`,
           }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📦</div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>No versions yet</div>
-            <div style={{ fontSize: 13, color: T.textMuted }}>Create your first catalog version above to get started.</div>
+            {releases.length === 0 ? (
+              <>
+                <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>No versions yet</div>
+                <div style={{ fontSize: 13, color: T.textMuted }}>Create your first catalog version above to get started.</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>
+                  Nothing deployed in {cluster.toUpperCase()}
+                </div>
+                <div style={{ fontSize: 13, color: T.textMuted }}>
+                  No catalog version is currently deployed in {cluster.toUpperCase()}. Promote a version here, or see all versions in History.
+                </div>
+              </>
+            )}
           </div>
         )}
 
-        {!loading && releases.map((r) => (
+        {!loading && deployedReleases.map((r) => (
           <ReleaseCard
             key={r.version}
             release={r}
