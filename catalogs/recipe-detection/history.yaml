@@ -52,3 +52,7 @@
 - timestamp: '2026-06-14T01:16:05.714118523Z'
   action: delete
   version: '0.16'
+- timestamp: '2026-06-14T06:32:56.467548930Z'
+  action: uninstall
+  version: '0.17'
+  env: qa
