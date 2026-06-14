@@ -6,9 +6,7 @@ import {
   btnSecondary,
   cardStyle,
   labelStyle,
-  inputStyle,
 } from '../../ui/styles';
-import EditRecipeInline from './EditRecipeInline';
 import DeployPreviewModal from './DeployPreviewModal';
 import { normalizeRecipeDescription, getRecipeUpgradeFrom, getRecipeUpgradeTo } from './utils';
 
@@ -19,18 +17,8 @@ const readVersion = (spec) => (typeof spec === 'string' ? spec : (spec?.version 
 export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatalog, cluster, onRefresh, onNotify }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState(null);
-  const [editingRecipe, setEditingRecipe] = useState(null);
-  const [editingCatalog, setEditingCatalog] = useState(false);
   const [showDeployPreview, setShowDeployPreview] = useState(false);
   const [promotion, setPromotion] = useState(null);
-  const [catalogDraft, setCatalogDraft] = useState({
-    releaseName: '',
-    catalogName: '',
-    catalogDescription: '',
-    catalogReleaseDate: '',
-    catalogStatus: 'GA',
-    maintainer: '',
-  });
 
   const fetchDetail = () => {
     return fetch(`${API_BASE}/helm-releases/${release.version}?cluster=${cluster}`)
@@ -71,110 +59,6 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
         onRefresh();
       })
       .catch((err) => onNotify(err.message, true));
-  };
-
-  const handleDeleteRecipe = (recipeVersion) => {
-    if (!window.confirm(`Delete recipe ${recipeVersion} from Helm ${release.version}?`)) return;
-    fetch(`${API_BASE}/helm-releases/${release.version}/recipes/${recipeVersion}?cluster=${cluster}`, { method: 'DELETE' })
-      .then((r) => {
-        if (!r.ok) throw new Error('Failed to delete');
-        onNotify('Recipe deleted');
-        setDetail(null);
-        onRefresh();
-      })
-      .catch((err) => onNotify(err.message, true));
-  };
-
-  const handleUpdateRecipe = (recipeVersion, updates) => {
-    fetch(`${API_BASE}/helm-releases/${release.version}/recipes/${recipeVersion}?cluster=${cluster}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    })
-      .then(async (r) => {
-        if (!r.ok) {
-          let payload = {};
-          try { payload = await r.json(); } catch { payload = {}; }
-          throw new Error(payload.error || 'Failed to update');
-        }
-        return r.json();
-      })
-      .then(() => {
-        onNotify('Recipe updated');
-        setEditingRecipe(null);
-        fetchDetail();
-        onRefresh();
-      })
-      .catch((err) => onNotify(err.message, true));
-  };
-
-  const openCatalogEditor = async () => {
-    let source = detail;
-    if (!source) {
-      source = await fetchDetail();
-    }
-    source = source || detail || release;
-    if (!source) return;
-    setCatalogDraft({
-      releaseName: source.releaseName || '',
-      catalogName: source.catalogName || source.catalog_name || '',
-      catalogDescription: source.catalogDescription || source.catalog_description || '',
-      catalogReleaseDate: source.catalogReleaseDate || source.release_date || '',
-      catalogStatus: source.catalogStatus || source.catalog_status || 'GA',
-      maintainer: source.maintainer || '',
-    });
-    setEditingCatalog(true);
-  };
-
-  const handleSaveCatalog = () => {
-    const source = detail || release;
-    if (!source) return;
-    const payload = {
-      version: source.version,
-      releaseName: catalogDraft.releaseName.trim() || source.releaseName,
-      status: source.status,
-      catalog_name: catalogDraft.catalogName.trim(),
-      catalog_description: catalogDraft.catalogDescription.trim(),
-      release_date: catalogDraft.catalogReleaseDate,
-      catalog_status: catalogDraft.catalogStatus,
-      maintainer: catalogDraft.maintainer.trim(),
-      recipes: source.recipes || [],
-    };
-
-    const optimistic = {
-      ...source,
-      releaseName: payload.releaseName,
-      catalogName: payload.catalog_name,
-      catalogDescription: payload.catalog_description,
-      catalogReleaseDate: payload.release_date,
-      catalogStatus: payload.catalog_status,
-      maintainer: payload.maintainer,
-    };
-    setDetail(optimistic);
-
-    fetch(`${API_BASE}/helm-releases/${release.version}?cluster=${cluster}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-      .then(async (r) => {
-        if (!r.ok) {
-          let payloadErr = {};
-          try { payloadErr = await r.json(); } catch { payloadErr = {}; }
-          throw new Error(payloadErr.error || 'Failed to update catalog');
-        }
-        return r.json();
-      })
-      .then((updated) => {
-        setDetail(updated);
-        setEditingCatalog(false);
-        onNotify('Catalog updated successfully. Redeploy required to apply changes.');
-        onRefresh();
-      })
-      .catch((err) => {
-        onNotify(err.message, true);
-        fetchDetail();
-      });
   };
 
   const recipes = detail?.recipes || [];
@@ -354,15 +238,6 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
               background: T.bgSurface, border: `1px solid ${T.border}`,
               borderRadius: 10, padding: 16, marginBottom: 10,
             }}>
-              {editingRecipe === recipe.version ? (
-                <EditRecipeInline
-                  recipe={recipe}
-                  allRecipes={recipes}
-                  onSave={(updates) => handleUpdateRecipe(recipe.version, updates)}
-                  onCancel={() => setEditingRecipe(null)}
-                />
-              ) : (
-                <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <div style={{ fontSize: 15, fontWeight: 700, color: T.teal }}>
@@ -457,105 +332,12 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
                       </div>
                     )}
                   </div>
-                </>
-              )}
             </div>
               );
             })()
           ))}
         </div>
       )}
-      {editingCatalog && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120,
-        }} onClick={() => setEditingCatalog(false)}>
-          <div onClick={(e) => e.stopPropagation()} style={{
-            background: T.bgCard, border: `1px solid ${T.border}`, borderRadius: 16,
-            padding: 24, width: 620, maxWidth: '90vw',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.5)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-              <h3 style={{ margin: 0, fontSize: 16, color: T.text }}>Edit Catalog</h3>
-              <button onClick={() => setEditingCatalog(false)} style={{
-                background: T.bgSurface, border: `1px solid ${T.border}`, borderRadius: 6,
-                color: T.textMuted, width: 28, height: 28, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
-              }}>×</button>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={labelStyle}>Catalog Name</label>
-                <input
-                  style={inputStyle}
-                  value={catalogDraft.catalogName}
-                  onChange={(e) => setCatalogDraft((prev) => ({ ...prev, catalogName: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label style={labelStyle}>Catalog Status</label>
-                <select
-                  style={inputStyle}
-                  value={catalogDraft.catalogStatus}
-                  onChange={(e) => setCatalogDraft((prev) => ({ ...prev, catalogStatus: e.target.value }))}
-                >
-                  <option value="GA">GA</option>
-                  <option value="Beta">Beta</option>
-                  <option value="Deprecated">Deprecated</option>
-                  <option value="Internal">Internal</option>
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Release Name</label>
-                <input
-                  style={{ ...inputStyle, opacity: 0.7 }}
-                  value={catalogDraft.releaseName}
-                  readOnly
-                />
-                <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>
-                  Auto-generated from chart version
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div>
-                <label style={labelStyle}>Release Date</label>
-                <input
-                  style={inputStyle}
-                  type="date"
-                  value={catalogDraft.catalogReleaseDate}
-                  onChange={(e) => setCatalogDraft((prev) => ({ ...prev, catalogReleaseDate: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label style={labelStyle}>Maintainer</label>
-                <input
-                  style={inputStyle}
-                  value={catalogDraft.maintainer}
-                  onChange={(e) => setCatalogDraft((prev) => ({ ...prev, maintainer: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 16 }}>
-              <label style={labelStyle}>Catalog Description</label>
-              <input
-                style={inputStyle}
-                value={catalogDraft.catalogDescription}
-                onChange={(e) => setCatalogDraft((prev) => ({ ...prev, catalogDescription: e.target.value }))}
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setEditingCatalog(false)} style={btnSecondary}>Cancel</button>
-              <button onClick={handleSaveCatalog} style={btnPrimary}>Save</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {showDeployPreview && (
         <DeployPreviewModal
           version={release.version}

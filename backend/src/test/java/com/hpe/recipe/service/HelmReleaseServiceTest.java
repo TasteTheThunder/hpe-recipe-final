@@ -51,7 +51,7 @@ class HelmReleaseServiceTest {
     }
 
     private HelmReleaseService service(GitStateService gs) {
-        return new HelmReleaseService(Map.of(), new PromotionProperties(), gs);
+        return new HelmReleaseService(new PromotionProperties(), gs);
     }
 
     @Test

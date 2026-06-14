@@ -1,279 +1,23 @@
 package com.hpe.recipe.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hpe.recipe.config.PromotionProperties;
 import com.hpe.recipe.model.ComponentSpec;
 import com.hpe.recipe.model.HelmRelease;
 import com.hpe.recipe.model.Recipe;
-import io.fabric8.kubernetes.api.model.ConfigMap;
-import io.fabric8.kubernetes.api.model.StatusDetails;
-import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.KubernetesClientException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
 public class HelmReleaseService {
 
-    private static final Logger log = LoggerFactory.getLogger(HelmReleaseService.class);
-
-    private static final String LABEL_APP_NAME = "app.kubernetes.io/name";
-    private static final String LABEL_MANAGED_BY = "app.kubernetes.io/managed-by";
-    private static final String LABEL_APP_VERSION = "app.kubernetes.io/version";
-    private static final String ANNOTATION_RELEASE_NAME = "meta.helm.sh/release-name";
-    private static final String RECIPE_DATA_KEY = "recipe-data.json";
     private final List<String> promotionPipeline;
-
-    private final Map<String, KubernetesClient> clients;
-    private final Map<String, Map<String, HelmRelease>> draftReleasesByCluster = new ConcurrentHashMap<>();
-    private final ObjectMapper objectMapper = new ObjectMapper();
     private final GitStateService gitState;
 
-    public HelmReleaseService(Map<String, KubernetesClient> clients,
-                              PromotionProperties promotionProperties,
-                              GitStateService gitState) {
-        this.clients = clients;
+    public HelmReleaseService(PromotionProperties promotionProperties, GitStateService gitState) {
         this.promotionPipeline = promotionProperties.getPipeline();
         this.gitState = gitState;
-    }
-
-    // ================= CLIENT =================
-
-    private KubernetesClient getClient(String cluster) {
-        KubernetesClient client = clients.get(cluster);
-        if (client == null) {
-            throw new RuntimeException("Invalid cluster: " + cluster);
-        }
-        return client;
-    }
-
-    private List<ConfigMap> fetchRecipeConfigMaps(String cluster) {
-        try {
-            return getClient(cluster).configMaps()
-                    .inNamespace(cluster)
-                    .withLabel(LABEL_APP_NAME, "recipe-detection")
-                    .list()
-                    .getItems();
-        } catch (KubernetesClientException e) {
-            log.warn("Unable to reach Kubernetes cluster '{}': {}", cluster, e.getMessage());
-            return List.of();
-        }
-    }
-
-    private boolean isHelmManaged(ConfigMap cm) {
-        Map<String, String> labels = cm.getMetadata() != null ? cm.getMetadata().getLabels() : null;
-        String managedBy = labels != null ? labels.get(LABEL_MANAGED_BY) : null;
-        return "Helm".equalsIgnoreCase(managedBy);
-    }
-
-    private Map<String, HelmRelease> draftsForCluster(String cluster) {
-        return draftReleasesByCluster.computeIfAbsent(cluster, k -> new ConcurrentHashMap<>());
-    }
-
-    private HelmRelease copyRelease(HelmRelease source) {
-        if (source == null) {
-            return null;
-        }
-
-        HelmRelease copy = new HelmRelease();
-        copy.setVersion(source.getVersion());
-        copy.setReleaseName(source.getReleaseName());
-        copy.setStatus(source.getStatus());
-        copy.setCluster(source.getCluster());
-        copy.setCatalogName(source.getCatalogName());
-        copy.setCatalogDescription(source.getCatalogDescription());
-        copy.setCatalogReleaseDate(source.getCatalogReleaseDate());
-        copy.setCatalogStatus(source.getCatalogStatus());
-        copy.setMaintainer(source.getMaintainer());
-        copy.setValuesFileName(source.getValuesFileName());
-
-        List<Recipe> copiedRecipes = new ArrayList<>();
-        if (source.getRecipes() != null) {
-            for (Recipe recipe : source.getRecipes()) {
-                Recipe r = new Recipe();
-                r.setVersion(recipe.getVersion());
-                r.setDescription(recipe.getDescription());
-                r.setReleaseDate(recipe.getReleaseDate());
-                r.setStatus(recipe.getStatus());
-                r.setReleaseNotes(recipe.getReleaseNotes());
-                r.setComponents(copyComponents(recipe.getComponents()));
-                r.setUpgradeTo(recipe.getUpgradeTo() == null
-                        ? new ArrayList<>()
-                    : new ArrayList<>(recipe.getUpgradeTo()));
-                r.setUpgradeFrom(recipe.getUpgradeFrom() == null
-                        ? new ArrayList<>()
-                        : new ArrayList<>(recipe.getUpgradeFrom()));
-                copiedRecipes.add(r);
-            }
-        }
-        copy.setRecipes(copiedRecipes);
-
-        return copy;
-    }
-
-    private void storeDraft(String cluster, HelmRelease release) {
-        HelmRelease stored = copyRelease(release);
-        stored.setCluster(cluster);
-        draftsForCluster(cluster).put(stored.getVersion(), stored);
-    }
-
-    private HelmRelease getDraft(String cluster, String version) {
-        HelmRelease draft = draftsForCluster(cluster).get(version);
-        if (draft == null) {
-            return null;
-        }
-        HelmRelease copied = copyRelease(draft);
-        copied.setCluster(cluster);
-        return copied;
-    }
-
-    private void removeDraft(String cluster, String version) {
-        draftsForCluster(cluster).remove(version);
-    }
-
-    private boolean helmManagedReleaseExists(String cluster, String version) {
-        List<ConfigMap> cms = fetchRecipeConfigMaps(cluster);
-
-        return cms.stream().anyMatch(cm -> {
-            HelmRelease parsed = parseConfigMap(cluster, cm);
-            return parsed != null
-                    && version.equals(parsed.getVersion())
-                    && isHelmManaged(cm);
-        });
-    }
-
-    // ================= PARSE =================
-
-    private HelmRelease parseConfigMap(String cluster, ConfigMap cm) {
-        try {
-            String json = cm.getData().get(RECIPE_DATA_KEY);
-            if (json == null || json.isBlank()) return null;
-
-            JsonNode root = objectMapper.readTree(json);
-            String version = root.get("chartVersion").asText();
-            String releaseName = cm.getMetadata().getAnnotations()
-                    .getOrDefault(ANNOTATION_RELEASE_NAME, "unknown");
-            String status = root.has("status") ? root.get("status").asText() : "deployed";
-            String catalogName = root.has("catalog_name") ? root.get("catalog_name").asText() : "";
-            String catalogDescription = root.has("catalog_description") ? root.get("catalog_description").asText() : "";
-            String catalogReleaseDate = root.has("release_date") ? root.get("release_date").asText() : "";
-            String catalogStatus = root.has("catalog_status") ? root.get("catalog_status").asText() : "";
-            String maintainer = root.has("maintainer") ? root.get("maintainer").asText() : "";
-            String valuesFileName = root.has("values_file") ? root.get("values_file").asText() : "";
-
-            List<Recipe> recipes = new ArrayList<>();
-            Map<String, List<String>> legacyFromByTarget = new LinkedHashMap<>();
-            boolean hasExplicitUpgradeTo = false;
-
-            for (JsonNode rNode : root.get("recipes")) {
-
-                Map<String, ComponentSpec> components = new LinkedHashMap<>();
-                JsonNode componentsNode = rNode.get("components");
-                JsonNode legacyRulesNode = rNode.get("componentUpgradeRules");
-                if (componentsNode != null && componentsNode.isObject()) {
-                    componentsNode.fields().forEachRemaining(e -> {
-                        String name = e.getKey();
-                        JsonNode compNode = e.getValue();
-                        String versionValue = null;
-                        String releaseDate = null;
-                        List<String> upgradeFrom = new ArrayList<>();
-                        List<String> upgradeTo = new ArrayList<>();
-
-                        if (compNode != null && compNode.isObject()) {
-                            versionValue = readText(compNode, "version");
-                            releaseDate = readText(compNode, "release_date");
-                            upgradeFrom = readStringList(
-                                    readFirst(compNode, "upgrade_from", "upgradeFrom"));
-                            upgradeTo = readStringList(
-                                    readFirst(compNode, "upgrade_to", "upgradeTo"));
-                        } else if (compNode != null && compNode.isTextual()) {
-                            versionValue = compNode.asText();
-                            if (legacyRulesNode != null && legacyRulesNode.isObject()) {
-                                JsonNode legacyRule = legacyRulesNode.get(name);
-                                if (legacyRule != null && legacyRule.isObject()) {
-                                    upgradeFrom = readStringList(legacyRule.get("from"));
-                                    upgradeTo = readStringList(legacyRule.get("to"));
-                                }
-                            }
-                        }
-
-                        components.put(name, new ComponentSpec(versionValue, releaseDate, upgradeFrom, upgradeTo));
-                    });
-                }
-
-                String versionValue = normalizeVersion(rNode.get("version").asText());
-                List<String> upgradeTo = normalizeVersions(
-                    readStringList(readFirst(rNode, "upgrade_to", "upgradeTo")));
-                if (!upgradeTo.isEmpty()) {
-                    hasExplicitUpgradeTo = true;
-                }
-                List<String> upgradeFrom = normalizeVersions(
-                    readStringList(readFirst(rNode, "upgrade_from", "upgradeFrom")));
-
-                List<String> legacyFrom = normalizeVersions(readStringList(rNode.get("upgradePaths")));
-                if (!legacyFrom.isEmpty()) {
-                    legacyFromByTarget.put(versionValue, legacyFrom);
-                }
-
-                recipes.add(new Recipe(
-                    versionValue,
-                    rNode.has("description") ? rNode.get("description").asText() : "",
-                    rNode.has("release_date") ? rNode.get("release_date").asText() : "",
-                    rNode.has("status") ? rNode.get("status").asText() : "",
-                    rNode.has("release_notes") ? rNode.get("release_notes").asText() : "",
-                    components,
-                    upgradeTo,
-                    upgradeFrom
-                ));
-            }
-
-            if (!hasExplicitUpgradeTo && !legacyFromByTarget.isEmpty()) {
-                Map<String, Recipe> byVersion = recipes.stream()
-                        .filter(Objects::nonNull)
-                        .collect(Collectors.toMap(Recipe::getVersion, r -> r, (a, b) -> a, LinkedHashMap::new));
-                for (Map.Entry<String, List<String>> entry : legacyFromByTarget.entrySet()) {
-                    String targetVersion = entry.getKey();
-                    for (String fromVersion : entry.getValue()) {
-                        Recipe source = byVersion.get(fromVersion);
-                        if (source == null) continue;
-                        List<String> upgradeTo = source.getUpgradeTo();
-                        if (upgradeTo == null) {
-                            upgradeTo = new ArrayList<>();
-                            source.setUpgradeTo(upgradeTo);
-                        }
-                        if (!upgradeTo.contains(targetVersion)) {
-                            upgradeTo.add(targetVersion);
-                        }
-                    }
-                }
-            }
-
-                HelmRelease parsedRelease = new HelmRelease(
-                    version,
-                    releaseName,
-                    status,
-                    cluster,
-                    catalogName,
-                    catalogDescription,
-                    catalogReleaseDate,
-                    catalogStatus,
-                    maintainer,
-                    recipes);
-                if (!valuesFileName.isBlank()) {
-                    parsedRelease.setValuesFileName(valuesFileName);
-                }
-                return parsedRelease;
-
-        } catch (Exception e) {
-            log.warn("Parse error: {}", e.getMessage());
-            return null;
-        }
     }
 
     // ================= PROMOTION PIPELINE =================
@@ -357,8 +101,7 @@ public class HelmReleaseService {
     }
 
     /**
-     * Resolves release content when promoting to a cluster that may not hold the draft
-     * (e.g. draft on dev, deploy target qa).
+     * Resolves a version's content from Git for a deploy/preview target.
      */
     public HelmRelease resolveReleaseForDeploy(String targetCluster, String version) {
         String v = RecipeDataMapper.normalizeVersion(version);
@@ -368,17 +111,6 @@ public class HelmReleaseService {
         }
         release.setCluster(targetCluster);
         return release;
-    }
-
-    public void ensureDraftOnCluster(String cluster, HelmRelease release) {
-        if (getDraft(cluster, release.getVersion()) == null) {
-            HelmRelease copy = copyRelease(release);
-            copy.setCluster(cluster);
-            if (copy.getStatus() == null || copy.getStatus().isBlank()) {
-                copy.setStatus("pending");
-            }
-            storeDraft(cluster, copy);
-        }
     }
 
     // ================= CRUD =================
@@ -435,55 +167,6 @@ public class HelmReleaseService {
         release.setVersion(v);
         gitState.writeVersion(release);
         return getHelmRelease(cluster, v);
-    }
-
-    public boolean deleteHelmRelease(String cluster, String version) {
-        // Git-backed delete: remove the version definition and clear any env that points at it.
-        // (Uninstalling the running Helm release in each namespace is handled separately — step 8.)
-        String v = RecipeDataMapper.normalizeVersion(version);
-        if (v == null || !gitState.versionExists(v)) {
-            return false;
-        }
-        gitState.deleteVersion(v);
-        for (String env : promotionPipeline) {
-            if (v.equals(gitState.readEnvironmentVersion(env))) {
-                gitState.deleteEnvironment(env);
-            }
-        }
-        return true;
-    }
-
-    public void cleanupDraftConfigMapsIfHelmExists(String cluster, String version) {
-        List<ConfigMap> cms = fetchRecipeConfigMaps(cluster);
-
-        boolean helmExistsForVersion = cms.stream().anyMatch(cm -> {
-            HelmRelease parsed = parseConfigMap(cluster, cm);
-            return parsed != null
-                    && version.equals(parsed.getVersion())
-                    && isHelmManaged(cm);
-        });
-
-        if (!helmExistsForVersion) {
-            return;
-        }
-
-        for (ConfigMap cm : cms) {
-            HelmRelease parsed = parseConfigMap(cluster, cm);
-            if (parsed != null
-                    && version.equals(parsed.getVersion())
-                    && !isHelmManaged(cm)) {
-                getClient(cluster).configMaps()
-                        .inNamespace(cluster)
-                        .withName(cm.getMetadata().getName())
-                        .delete();
-            }
-        }
-    }
-
-    public void cleanupDraftReleaseIfHelmExists(String cluster, String version) {
-        if (helmManagedReleaseExists(cluster, version)) {
-            removeDraft(cluster, version);
-        }
     }
 
     // ================= RECIPE =================
@@ -725,22 +408,6 @@ public class HelmReleaseService {
         return fromVersions;
     }
 
-    private Map<String, ComponentSpec> copyComponents(Map<String, ComponentSpec> components) {
-        if (components == null) return new LinkedHashMap<>();
-        Map<String, ComponentSpec> copy = new LinkedHashMap<>();
-        for (Map.Entry<String, ComponentSpec> entry : components.entrySet()) {
-            ComponentSpec spec = entry.getValue();
-            if (spec == null) continue;
-            copy.put(entry.getKey(), new ComponentSpec(
-                    spec.getVersion(),
-                    spec.getReleaseDate(),
-                    spec.getUpgradeFrom(),
-                    spec.getUpgradeTo()
-            ));
-        }
-        return copy;
-    }
-
     public Optional<String> validateComponentUpgradeCompatibility(HelmRelease release) {
         if (release == null || release.getRecipes() == null) return Optional.empty();
 
@@ -833,163 +500,6 @@ public class HelmReleaseService {
         return spec != null ? spec.getVersion() : null;
     }
 
-    private Map<String, Object> buildComponentPayload(Map<String, ComponentSpec> components) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        if (components == null) return payload;
-
-        for (Map.Entry<String, ComponentSpec> entry : components.entrySet()) {
-            ComponentSpec spec = entry.getValue();
-            if (spec == null) continue;
-            Map<String, Object> specMap = new LinkedHashMap<>();
-            specMap.put("version", spec.getVersion());
-            if (spec.getReleaseDate() != null && !spec.getReleaseDate().isBlank()) {
-                specMap.put("release_date", spec.getReleaseDate());
-            }
-            specMap.put("upgrade_from", safeList(spec.getUpgradeFrom()));
-            specMap.put("upgrade_to", safeList(spec.getUpgradeTo()));
-            payload.put(entry.getKey(), specMap);
-        }
-
-        return payload;
-    }
-
-    private List<String> safeList(List<String> items) {
-        return items != null ? items : Collections.emptyList();
-    }
-
-    private String readText(JsonNode node, String field) {
-        if (node == null) return null;
-        JsonNode value = node.get(field);
-        return value != null && value.isTextual() ? value.asText() : null;
-    }
-
-    private JsonNode readFirst(JsonNode node, String primary, String fallback) {
-        if (node == null) return null;
-        JsonNode first = node.get(primary);
-        if (first != null) return first;
-        return node.get(fallback);
-    }
-
-    private List<String> readStringList(JsonNode node) {
-        if (node == null) return new ArrayList<>();
-        List<String> values = new ArrayList<>();
-        if (node.isArray()) {
-            node.forEach(v -> values.add(v.asText()));
-        } else if (node.isTextual()) {
-            String raw = node.asText();
-            Arrays.stream(raw.split(","))
-                    .map(String::trim)
-                    .filter(s -> !s.isEmpty())
-                    .forEach(values::add);
-        }
-        return values;
-    }
-
-    private String normalizeVersion(String version) {
-        if (version == null) return null;
-        return version.trim().replaceFirst("^[vV]", "");
-    }
-
-    private List<String> normalizeVersions(List<String> versions) {
-        if (versions == null) return Collections.emptyList();
-        List<String> normalized = new ArrayList<>();
-        for (String v : versions) {
-            String clean = normalizeVersion(v);
-            if (clean != null && !clean.isBlank()) normalized.add(clean);
-        }
-        return normalized;
-    }
-
-    // ================= INTERNAL =================
-
-    private void updateConfigMap(String cluster, String version, HelmRelease release) {
-
-        List<ConfigMap> cms = fetchRecipeConfigMaps(cluster);
-
-        for (ConfigMap cm : cms) {
-
-            HelmRelease parsed = parseConfigMap(cluster, cm);
-
-                if (parsed != null
-                    && parsed.getVersion().equals(version)
-                    && !isHelmManaged(cm)) {
-
-                try {
-                    cm.getData().put(RECIPE_DATA_KEY, buildRecipeJson(release));
-
-                    getClient(cluster).configMaps()
-                            .inNamespace(cluster)
-                            .resource(cm)
-                            .update();
-
-                } catch (Exception e) {
-                    log.error("Update failed: {}", e.getMessage());
-                }
-            }
-        }
-    }
-
-    private String buildRecipeJson(HelmRelease release) {
-
-        try {
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("chartVersion", release.getVersion());
-            data.put("status", release.getStatus());
-            if (release.getCatalogName() != null && !release.getCatalogName().isBlank()) {
-                data.put("catalog_name", release.getCatalogName());
-            }
-            if (release.getCatalogDescription() != null && !release.getCatalogDescription().isBlank()) {
-                data.put("catalog_description", release.getCatalogDescription());
-            }
-            if (release.getCatalogReleaseDate() != null && !release.getCatalogReleaseDate().isBlank()) {
-                data.put("release_date", release.getCatalogReleaseDate());
-            }
-            if (release.getCatalogStatus() != null && !release.getCatalogStatus().isBlank()) {
-                data.put("catalog_status", release.getCatalogStatus());
-            }
-            if (release.getMaintainer() != null && !release.getMaintainer().isBlank()) {
-                data.put("maintainer", release.getMaintainer());
-            }
-
-            List<Map<String, Object>> recipes = new ArrayList<>();
-
-            for (Recipe r : release.getRecipes()) {
-
-                Map<String, Object> map = new LinkedHashMap<>();
-                map.put("version", normalizeVersion(r.getVersion()));
-                map.put("description", r.getDescription());
-                if (r.getReleaseDate() != null && !r.getReleaseDate().isBlank()) {
-                    map.put("release_date", r.getReleaseDate());
-                }
-                if (r.getStatus() != null && !r.getStatus().isBlank()) {
-                    map.put("status", r.getStatus());
-                }
-                if (r.getReleaseNotes() != null && !r.getReleaseNotes().isBlank()) {
-                    map.put("release_notes", r.getReleaseNotes());
-                }
-                map.put("components", buildComponentPayload(r.getComponents()));
-                List<String> upgradeTo = normalizeVersions(r.getUpgradeTo());
-                if (!upgradeTo.isEmpty()) {
-                    map.put("upgrade_to", upgradeTo);
-                }
-                List<String> upgradeFrom = normalizeVersions(r.getUpgradeFrom());
-                if (!upgradeFrom.isEmpty()) {
-                    map.put("upgrade_from", upgradeFrom);
-                }
-
-                recipes.add(map);
-            }
-
-            data.put("recipes", recipes);
-
-            return objectMapper.writeValueAsString(data);
-
-        } catch (Exception e) {
-            return "{}";
-        }
-    }
-
-
     public HelmRelease getDeployedFromCluster(String cluster, String version) {
         String active = gitState.readEnvironmentVersion(cluster);
         String v = RecipeDataMapper.normalizeVersion(version);
@@ -1081,27 +591,5 @@ public class HelmReleaseService {
             return (List<Object>) list;
         }
         return Collections.emptyList();
-    }
-
-    int compareVersions(String a, String b) {
-        String[] partsA = a.split("\\.");
-        String[] partsB = b.split("\\.");
-        int len = Math.max(partsA.length, partsB.length);
-        for (int i = 0; i < len; i++) {
-            int numA = i < partsA.length ? parseVersionPart(partsA[i]) : 0;
-            int numB = i < partsB.length ? parseVersionPart(partsB[i]) : 0;
-            if (numA != numB) {
-                return Integer.compare(numA, numB);
-            }
-        }
-        return 0;
-    }
-
-    private int parseVersionPart(String part) {
-        try {
-            return Integer.parseInt(part.replaceAll("[^0-9].*", ""));
-        } catch (NumberFormatException e) {
-            return 0;
-        }
     }
 }
