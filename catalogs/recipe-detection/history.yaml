@@ -27,3 +27,8 @@
   version: 0.0.2
   env: qa
   fromVersion: dev
+- timestamp: '2026-06-14T09:17:58.719228788Z'
+  action: rollback
+  version: 0.0.1
+  env: qa
+  fromVersion: 0.0.2
