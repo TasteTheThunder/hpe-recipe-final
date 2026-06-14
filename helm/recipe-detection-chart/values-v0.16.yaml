@@ -1,6 +1,6 @@
 recipeData:
   chartVersion: '0.16'
-  target_cluster: dev
+  target_cluster: qa
   maintainer: Aditya
   values_file: values-v0.16.yaml
   recipes:
