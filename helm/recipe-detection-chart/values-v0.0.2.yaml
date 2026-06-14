@@ -1,6 +1,6 @@
 recipeData:
   chartVersion: 0.0.2
-  target_cluster: dev
+  target_cluster: qa
   catalog_name: HPE Engineered Systems Catalog
   catalog_description: Pre-validated recipes for engineered systems
   release_date: '2026-06-12'
