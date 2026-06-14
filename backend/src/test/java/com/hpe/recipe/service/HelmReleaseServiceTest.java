@@ -110,6 +110,33 @@ class HelmReleaseServiceTest {
         assertThat(diff.get("recipesChanged").toString()).contains("3.6.0");
     }
 
+    @Test
+    void nextPromotionTargetAdvancesForward() {
+        GitStateService gs = gitState("clone-a");
+        gs.writeVersion(sampleRelease("0.16"));
+        gs.writeVersion(sampleRelease("0.17"));
+        gs.setEnvironmentVersion("dev", "0.17");
+        gs.setEnvironmentVersion("qa", "0.16");
+
+        HelmReleaseService svc = service(gs);
+        // 0.16's furthest stage is qa -> next is integration (NOT dev, which it has left).
+        assertThat(svc.getNextPromotionTarget("0.16")).contains("integration");
+        // 0.17's furthest stage is dev -> next is qa.
+        assertThat(svc.getNextPromotionTarget("0.17")).contains("qa");
+    }
+
+    @Test
+    void noNextPromotionTargetForProdOrUndeployed() {
+        GitStateService gs = gitState("clone-a");
+        gs.writeVersion(sampleRelease("0.16"));   // deployed nowhere
+        gs.writeVersion(sampleRelease("9.9"));
+        gs.setEnvironmentVersion("prod", "9.9");  // already in the last stage
+
+        HelmReleaseService svc = service(gs);
+        assertThat(svc.getNextPromotionTarget("0.16")).isEmpty();
+        assertThat(svc.getNextPromotionTarget("9.9")).isEmpty();
+    }
+
     private HelmRelease sampleRelease(String version) {
         Map<String, ComponentSpec> comps = new LinkedHashMap<>();
         comps.put("spark", new ComponentSpec("3.5.0", "2024-01-01",

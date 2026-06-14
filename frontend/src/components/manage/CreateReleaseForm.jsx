@@ -47,6 +47,35 @@ const draftToRecipeShape = (draft) => ({
   }, {}),
 });
 
+// Convert a saved recipe (components keyed by name) into the editable draft shape.
+// Existing fields are marked "touched" so source-seeding never overwrites them — seeding
+// only auto-fills NEW recipes the user adds during the edit.
+const recipeToDraft = (recipe) => ({
+  id: `${recipe.version || 'r'}-${Math.random().toString(36).slice(2, 8)}`,
+  version: recipe.version || '',
+  description: recipe.description || '',
+  releaseDate: recipe.release_date || recipe.releaseDate || '',
+  status: recipe.status || 'GA',
+  releaseNotes: recipe.release_notes || recipe.releaseNotes || '',
+  components: Object.entries(recipe.components || {}).map(([name, spec]) => ({
+    name,
+    version: readVersion(spec),
+    releaseDate: spec?.release_date || '',
+    upgradeFrom: readUpgradeList(spec, 'upgrade_from', 'upgradeFrom').join(', '),
+    upgradeTo: readUpgradeList(spec, 'upgrade_to', 'upgradeTo').join(', '),
+    versionTouched: true,
+    upgradeFromTouched: true,
+    upgradeToTouched: true,
+  })),
+  upgradeFrom: (recipe.upgrade_from || recipe.upgradeFrom || []).map(String),
+  upgradeTo: (recipe.upgrade_to || recipe.upgradeTo || []).map(String),
+  upgradeFromTouched: true,
+  upgradeToTouched: true,
+  sourceReleaseVersion: '',
+  sourceRecipeVersions: [],
+  sourceEnabled: false,
+});
+
 const buildSourceComponentInfo = (sourceRecipe) => {
   const map = {};
   Object.entries(sourceRecipe?.components || {}).forEach(([name, spec]) => {
@@ -192,7 +221,9 @@ const syncAllDraftSourceLinks = (drafts, cache) => {
   return result;
 };
 
-export default function CreateReleaseForm({ cluster, onCreated }) {
+export default function CreateReleaseForm({
+  cluster, onCreated, editMode = false, initialCatalog = null, nextVersionPreview = '',
+}) {
   const [version, setVersion] = useState('');
   const [valuesFileName, setValuesFileName] = useState('');
   const [releaseName, setReleaseName] = useState('');
@@ -243,6 +274,20 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
       .then((data) => setAvailableReleases(Array.isArray(data) ? data : []))
       .catch(() => setAvailableReleases([]));
   }, [cluster]);
+
+  // Edit mode: pre-fill the form from the current DEV catalog so saving forks a new version.
+  useEffect(() => {
+    if (!editMode || !initialCatalog) return;
+    setVersion(initialCatalog.version || '');
+    setReleaseName(initialCatalog.releaseName || '');
+    setCatalogName(initialCatalog.catalogName || initialCatalog.catalog_name || '');
+    setCatalogDescription(initialCatalog.catalogDescription || initialCatalog.catalog_description || '');
+    setCatalogReleaseDate(initialCatalog.catalogReleaseDate || initialCatalog.release_date || '');
+    setCatalogStatus(initialCatalog.catalogStatus || initialCatalog.catalog_status || 'GA');
+    setMaintainer(initialCatalog.maintainer || '');
+    setDraftRecipes((initialCatalog.recipes || []).map(recipeToDraft));
+    setExpandedRecipeIds([]);
+  }, [editMode, initialCatalog]);
 
   const loadSourceRecipes = (releaseVersion) => {
     if (!releaseVersion) return;
@@ -456,33 +501,41 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
       });
     }
 
+    const body = {
+      version: version.trim(),
+      ...(valuesFileName.trim() ? { valuesFileName: valuesFileName.trim() } : {}),
+      releaseName: releaseName.trim() || autoReleaseName,
+      status: 'pending',
+      catalog_name: catalogName.trim(),
+      catalog_description: catalogDescription.trim(),
+      release_date: catalogReleaseDate,
+      catalog_status: catalogStatus,
+      maintainer: maintainer.trim(),
+      recipes: recipesPayload,
+    };
+    // Edit mode forks a NEW version on DEV via the platform endpoint; create posts a brand-new release.
+    const url = editMode ? `${API_BASE}/catalog/edit` : `${API_BASE}/helm-releases?cluster=${cluster}`;
+
     setSubmitting(true);
-    fetch(`${API_BASE}/helm-releases?cluster=${cluster}`, {
+    fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: version.trim(),
-        ...(valuesFileName.trim() ? { valuesFileName: valuesFileName.trim() } : {}),
-        releaseName: releaseName.trim() || autoReleaseName,
-        status: 'pending',
-        catalog_name: catalogName.trim(),
-        catalog_description: catalogDescription.trim(),
-        release_date: catalogReleaseDate,
-        catalog_status: catalogStatus,
-        maintainer: maintainer.trim(),
-        recipes: recipesPayload,
-      }),
+      body: JSON.stringify(body),
     })
       .then(async (r) => {
         if (r.status === 409) throw new Error('Version already exists');
         if (!r.ok) {
           let payload = {};
           try { payload = await r.json(); } catch { payload = {}; }
-          throw new Error(payload.error || 'Failed to create');
+          throw new Error(payload.error || (editMode ? 'Failed to save changes' : 'Failed to create'));
         }
         return r.json();
       })
-      .then(() => {
+      .then((saved) => {
+        if (editMode) {
+          onCreated(`New version v${saved?.version || nextVersionPreview} created — deploying to DEV`);
+          return;
+        }
         setVersion(''); setValuesFileName(''); setReleaseName('');
         setCatalogName('');
         setCatalogDescription('');
@@ -501,13 +554,28 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
     <form onSubmit={handleSubmit} style={cardStyle}>
       <h3 style={{ margin: '0 0 16px', fontSize: 16, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: T.teal }} />
-        New Helm Release
+        {editMode ? 'Edit DEV Catalog' : 'New Helm Release'}
       </h3>
+      {editMode && (
+        <div style={{
+          marginBottom: 16, padding: '8px 14px', borderRadius: 8,
+          background: `${T.blue}12`, border: `1px solid ${T.blue}33`,
+          fontSize: 12, color: T.blue,
+        }}>
+          Editing DEV is non-destructive — <strong>saving will create v{nextVersionPreview || '…'}</strong> and
+          deploy it to DEV. Other environments are unchanged.
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 14 }}>
         <div>
           <label style={labelStyle}>Chart Version</label>
-          <input style={inputStyle} placeholder="e.g. 0.0.4" value={version}
-            onChange={(e) => setVersion(e.target.value)} required />
+          <input style={editMode ? { ...inputStyle, opacity: 0.7 } : inputStyle} placeholder="e.g. 0.0.4" value={version}
+            onChange={(e) => setVersion(e.target.value)} required readOnly={editMode} />
+          {editMode && (
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>
+              Current DEV version — saving creates v{nextVersionPreview || '…'}
+            </div>
+          )}
         </div>
         <div>
           <label style={labelStyle}>Values File Name (optional)</label>
@@ -971,7 +1039,9 @@ export default function CreateReleaseForm({ cluster, onCreated }) {
       </div>
 
       <button type="submit" style={{ ...btnPrimary, opacity: submitting ? 0.6 : 1 }} disabled={submitting}>
-        {submitting ? 'Creating...' : 'Create Release'}
+        {submitting
+          ? 'Saving...'
+          : (editMode ? `Save — create v${nextVersionPreview || '…'}` : 'Create Release')}
       </button>
     </form>
   );

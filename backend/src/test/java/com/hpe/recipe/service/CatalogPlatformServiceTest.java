@@ -134,6 +134,57 @@ class CatalogPlatformServiceTest {
         assertThat(svc.version("0.16").getVersion()).isEqualTo("0.16");
     }
 
+    @Test
+    void nextTargetAdvancesForwardFromFurthestStage() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+        svc.createVersion(sampleRelease("0.16"));
+        svc.deployToDev("0.16");
+        svc.promote("0.16", "qa");
+        svc.editDev(sampleRelease("ignored")); // forks 0.17 onto dev -> dev=0.17, qa=0.16
+
+        assertThat(svc.promotionOptions("0.16")).containsEntry("nextTarget", "integration");
+        assertThat(svc.promotionOptions("0.17")).containsEntry("nextTarget", "qa");
+        // 0.16 (live in qa) may only go forward to integration — never back to dev/qa or skip to prod.
+        assertThat(svc.promotionOptions("0.16").get("allowedTargets")).isEqualTo(List.of("integration"));
+    }
+
+    @Test
+    void noNextTargetForUndeployedOrProd() {
+        GitStateService gs = new GitStateService(
+                remoteUri, tmp.resolve("state-clone").toString(), "main", "user", "");
+        CatalogPlatformService svc = new CatalogPlatformService(
+                gs, new NoopGitOps(), new RecordingJenkins(), new PromotionProperties());
+
+        gs.writeVersion(sampleRelease("0.16")); // exists in Git, deployed nowhere
+        assertThat(svc.promotionOptions("0.16")).doesNotContainKey("nextTarget");
+        assertThat(svc.promotionOptions("0.16").get("allowedTargets")).isEqualTo(List.of());
+
+        gs.writeVersion(sampleRelease("9.9"));
+        gs.setEnvironmentVersion("prod", "9.9"); // sitting in the last stage
+        assertThat(svc.promotionOptions("9.9")).doesNotContainKey("nextTarget");
+    }
+
+    @Test
+    void multipleVersionsPromoteForwardIndependently() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+        svc.createVersion(sampleRelease("0.16"));
+        svc.deployToDev("0.16");
+        svc.promote("0.16", "qa");
+        svc.editDev(sampleRelease("ignored")); // dev=0.17, qa=0.16
+
+        svc.promote("0.16", "integration"); // older version races ahead: qa -> integration
+        svc.promote("0.17", "qa");           // newer version trails: dev -> qa, replacing 0.16
+
+        assertThat(svc.environments())
+                .containsEntry("integration", "0.16")
+                .containsEntry("qa", "0.17");
+
+        // qa held 0.16 then 0.17 -> one-step rollback target is preserved.
+        GitStateService fresh = new GitStateService(
+                remoteUri, tmp.resolve("verify-clone").toString(), "main", "user", "");
+        assertThat(fresh.readEnvironmentHistory("qa")).containsExactly("0.16", "0.17");
+    }
+
     // ---------- helpers / stubs ----------
 
     private CatalogPlatformService newPlatform(RecordingJenkins jenkins) {

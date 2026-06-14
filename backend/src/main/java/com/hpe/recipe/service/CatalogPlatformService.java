@@ -88,16 +88,17 @@ public class CatalogPlatformService {
             canRollback.put(env, i > 0 && gitState.readEnvironmentHistory(env).size() >= 2);
         }
 
+        // Forward-only: a version advances from the FURTHEST stage it currently occupies, one
+        // stage at a time. It never moves back to an earlier stage it has already left, and an
+        // undeployed version has no promotion target (deploying it to the first stage is a
+        // separate deploy-to-dev action, not a promotion).
+        int furthest = furthestStageIndex(v, envs, pipeline);
+        String nextTarget = (furthest >= 0 && furthest < pipeline.size() - 1)
+                ? pipeline.get(furthest + 1)
+                : null;
         List<String> allowedTargets = new ArrayList<>();
-        if (!pipeline.isEmpty() && !v.equals(envs.get(pipeline.get(0)))) {
-            allowedTargets.add(pipeline.get(0)); // deploy to dev
-        }
-        for (int i = 1; i < pipeline.size(); i++) {
-            String env = pipeline.get(i);
-            String prev = pipeline.get(i - 1);
-            if (v.equals(envs.get(prev)) && !v.equals(envs.get(env))) {
-                allowedTargets.add(env);
-            }
+        if (nextTarget != null) {
+            allowedTargets.add(nextTarget);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -105,11 +106,22 @@ public class CatalogPlatformService {
         result.put("deployedOn", deployedOn);
         result.put("activeVersionOnCluster", activeVersions);
         result.put("allowedTargets", allowedTargets);
-        if (!allowedTargets.isEmpty()) {
-            result.put("nextTarget", allowedTargets.get(0));
+        if (nextTarget != null) {
+            result.put("nextTarget", nextTarget);
         }
         result.put("canRollback", canRollback);
         return result;
+    }
+
+    /** Highest pipeline index where {@code v} is the active version, or -1 if deployed nowhere. */
+    private static int furthestStageIndex(String v, Map<String, String> envs, List<String> pipeline) {
+        int furthest = -1;
+        for (int i = 0; i < pipeline.size(); i++) {
+            if (v.equals(envs.get(pipeline.get(i)))) {
+                furthest = i;
+            }
+        }
+        return furthest;
     }
 
     // ===================== WRITES =====================

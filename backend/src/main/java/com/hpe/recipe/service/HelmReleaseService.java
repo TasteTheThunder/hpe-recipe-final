@@ -318,18 +318,19 @@ public class HelmReleaseService {
     }
 
     public Optional<String> getNextPromotionTarget(String version) {
-        for (String cluster : promotionPipeline) {
-            if (getDeployedFromCluster(cluster, version) != null) {
-                continue;
-            }
-            try {
-                validatePromotionDeploy(cluster, version);
-                return Optional.of(cluster);
-            } catch (IllegalStateException e) {
-                return Optional.empty();
+        // Forward-only: advance from the FURTHEST stage the version currently occupies. A version
+        // that has moved past dev must NOT be pulled back to dev; an undeployed version (or one
+        // already in the last stage) has no promotion target.
+        int furthest = -1;
+        for (int i = 0; i < promotionPipeline.size(); i++) {
+            if (getDeployedFromCluster(promotionPipeline.get(i), version) != null) {
+                furthest = i;
             }
         }
-        return Optional.empty();
+        if (furthest < 0 || furthest >= promotionPipeline.size() - 1) {
+            return Optional.empty();
+        }
+        return Optional.of(promotionPipeline.get(furthest + 1));
     }
 
     public Map<String, Object> getPromotionOptions(String version) {
@@ -346,17 +347,12 @@ public class HelmReleaseService {
         result.put("deployedOn", deployedOn);
         result.put("activeVersionOnCluster", activeVersions);
 
+        // Forward-only: the only allowed target is the next stage past the version's furthest one.
+        Optional<String> next = getNextPromotionTarget(version);
         List<String> allowedTargets = new ArrayList<>();
-        for (String cluster : promotionPipeline) {
-            try {
-                validatePromotionDeploy(cluster, version);
-                allowedTargets.add(cluster);
-            } catch (IllegalStateException ignored) {
-                // not allowed yet
-            }
-        }
+        next.ifPresent(allowedTargets::add);
         result.put("allowedTargets", allowedTargets);
-        getNextPromotionTarget(version).ifPresent(next -> result.put("nextTarget", next));
+        next.ifPresent(n -> result.put("nextTarget", n));
         return result;
     }
 

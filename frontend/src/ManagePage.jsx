@@ -10,6 +10,17 @@ import ReleaseCard from './components/manage/ReleaseCard';
 const API_BASE = '/api';
 const DEFAULT_PIPELINE = ['dev', 'qa', 'integration', 'prod'];
 
+// Preview of the version an edit will fork (backend bumps the patch and avoids clashes).
+const bumpPatch = (v) => {
+  if (!v) return '';
+  const parts = String(v).replace(/^v/i, '').split('.');
+  const last = parts[parts.length - 1];
+  const n = parseInt(last, 10);
+  if (Number.isNaN(n)) return `${v}.1`;
+  parts[parts.length - 1] = String(n + 1);
+  return parts.join('.');
+};
+
 // ============================================================================
 // Main Manage Page
 // ============================================================================
@@ -29,6 +40,7 @@ export default function ManagePage() {
   const [versionCount, setVersionCount] = useState(null);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [editing, setEditing] = useState(null); // DEV catalog being edited (forks a new version on save)
 
   useEffect(() => {
     fetch(`${API_BASE}/pipeline`)
@@ -143,6 +155,30 @@ export default function ManagePage() {
       minHeight: '100vh', background: T.bg, color: T.text,
     }}>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+
+      {editing && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 130,
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            overflowY: 'auto', padding: '40px 16px',
+          }}
+          onClick={() => setEditing(null)}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 920, maxWidth: '95vw' }}>
+            <CreateReleaseForm
+              editMode
+              initialCatalog={editing}
+              nextVersionPreview={bumpPatch(editing.version)}
+              cluster={cluster}
+              onCreated={(msg, isErr) => {
+                notify(msg, isErr);
+                if (!isErr) { setEditing(null); refresh(); }
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <header style={{
@@ -260,6 +296,7 @@ export default function ManagePage() {
             onNotify={notify}
             onDeploy={deployRelease}
             onRollback={rollbackEnv}
+            onEditCatalog={setEditing}
           />
         ))}
       </div>

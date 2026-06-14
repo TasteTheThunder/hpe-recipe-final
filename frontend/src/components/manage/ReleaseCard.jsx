@@ -16,7 +16,7 @@ const API_BASE = '/api';
 
 const readVersion = (spec) => (typeof spec === 'string' ? spec : (spec?.version || ''));
 
-export default function ReleaseCard({ release, onDeploy, onRollback, cluster, onRefresh, onNotify }) {
+export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatalog, cluster, onRefresh, onNotify }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState(null);
   const [editingRecipe, setEditingRecipe] = useState(null);
@@ -182,21 +182,30 @@ export default function ReleaseCard({ release, onDeploy, onRollback, cluster, on
     setShowDeployPreview(true);
   };
 
-  const deployTarget = promotion?.nextTarget
-    || (['pending', 'failed', 'push_failed'].includes(displayStatus) ? 'dev' : null);
-  const deployLabel = !deployTarget
-    ? 'Promoted'
-    : deployTarget === 'dev'
-      ? 'Deploy to DEV'
-      : `Promote to ${deployTarget.toUpperCase()}`;
-  const canPromote = promotion
-    ? Boolean(promotion.nextTarget)
-    : ['pending', 'failed', 'push_failed'].includes(displayStatus);
   const pipeline = promotion?.pipeline || ['dev', 'qa', 'integration', 'prod'];
   const deployedOn = promotion?.deployedOn || {};
+  const firstStage = pipeline[0];
+  const isDeployedAnywhere = pipeline.some((env) => deployedOn[env]);
+  // Forward-only: promote to the backend's nextTarget. If the version isn't deployed anywhere
+  // yet, the only forward action is deploying it to the first stage (deploy-to-dev).
+  const deployTarget = promotion?.nextTarget || (!isDeployedAnywhere ? firstStage : null);
+  const canPromote = Boolean(deployTarget);
+  const deployLabel = !deployTarget
+    ? 'Promoted'
+    : deployTarget === firstStage
+      ? `Deploy to ${firstStage.toUpperCase()}`
+      : `Promote to ${deployTarget.toUpperCase()}`;
   const canRollback = promotion?.canRollback || {};
   // Environments (past the first stage) where THIS version is live and a previous version exists.
   const rollbackEnvs = pipeline.filter((env, idx) => idx > 0 && deployedOn[env] && canRollback[env]);
+  // Editing is DEV-only, and only on the version currently live on DEV (the dev catalog).
+  const devStage = pipeline[0];
+  const isDevCatalog = cluster === devStage && Boolean(deployedOn[devStage]);
+
+  const handleEditCatalog = async () => {
+    const source = detail || (await fetchDetail()) || release;
+    if (onEditCatalog) onEditCatalog(source);
+  };
 
   const handleConfirmDeploy = (version) => onDeploy(version, deployTarget);
 
@@ -257,9 +266,11 @@ export default function ReleaseCard({ release, onDeploy, onRollback, cluster, on
           }}>▼</span>
         </div>
         <div style={{ display: 'flex', gap: 8, marginLeft: 12 }}>
-          <button onClick={openCatalogEditor} style={{
-            ...btnSecondary, padding: '6px 14px', fontSize: 12,
-          }}>Edit Catalog</button>
+          {isDevCatalog && (
+            <button onClick={handleEditCatalog} style={{
+              ...btnSecondary, padding: '6px 14px', fontSize: 12,
+            }}>Edit Catalog</button>
+          )}
           {displayStatus !== 'deploying' && (
             <>
               <button onClick={handleDeploy} style={{
@@ -375,12 +386,7 @@ export default function ReleaseCard({ release, onDeploy, onRollback, cluster, on
                         </div>
                       )}
                     </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => setEditingRecipe(recipe.version)}
-                        style={{ ...btnSecondary, padding: '4px 12px', fontSize: 11 }}>Edit</button>
-                      <button onClick={() => handleDeleteRecipe(recipe.version)}
-                        style={{ ...btnDanger, padding: '4px 12px', fontSize: 11 }}>Delete</button>
-                    </div>
+                    {/* Recipes are edited via the DEV "Edit Catalog" editor (forks a new version). */}
                   </div>
 
                   {/* Components grid */}
