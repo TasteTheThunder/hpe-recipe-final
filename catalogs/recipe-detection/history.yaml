@@ -75,3 +75,8 @@
   version: 0.0.6
   env: dev
   fromVersion: 0.0.5
+- timestamp: '2026-06-15T11:16:18.252902380Z'
+  action: edit
+  version: 0.0.7
+  env: dev
+  fromVersion: 0.0.6
