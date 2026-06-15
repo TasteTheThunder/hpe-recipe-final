@@ -24,15 +24,6 @@ pipeline {
             }
         }
 
-        stage('SCM-only build') {
-            when {
-                expression { params.ALLOW_DEPLOY != 'yes' }
-            }
-            steps {
-                echo 'ALLOW_DEPLOY=no — skipping Helm changes. Deploy only via UI/API trigger with ALLOW_DEPLOY=yes.'
-            }
-        }
-
         stage('Validate Cluster Access') {
             when {
                 expression { params.ALLOW_DEPLOY == 'yes' }
