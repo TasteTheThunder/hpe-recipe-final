@@ -100,3 +100,8 @@
   version: 0.0.5
   env: integration
   fromVersion: qa
+- timestamp: '2026-06-15T11:36:11.436680483Z'
+  action: promote
+  version: 0.0.5
+  env: prod
+  fromVersion: integration
