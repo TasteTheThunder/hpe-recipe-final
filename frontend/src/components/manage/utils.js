@@ -38,10 +38,17 @@ function getRecipeUpgradeFrom(recipes, recipe) {
 function getEnvironmentActions(pipeline, cluster, promotion) {
   const clusterIndex = pipeline.indexOf(cluster);
   const isCurrentVersion = Boolean(promotion?.deployedOn?.[cluster]);
+  const nextStage = clusterIndex >= 0 ? pipeline[clusterIndex + 1] || null : null;
+  const activeVersions = promotion?.activeVersionOnCluster || {};
+  const currentVersion = activeVersions[cluster] || '';
+  const targetVersion = nextStage ? activeVersions[nextStage] || '' : '';
+  const knowsTargetVersion = nextStage && Object.prototype.hasOwnProperty.call(activeVersions, nextStage);
+  const promotionWouldChangeTarget = Boolean(nextStage)
+    && (!knowsTargetVersion || currentVersion !== targetVersion);
 
   return {
-    promoteTarget: isCurrentVersion && clusterIndex >= 0
-      ? pipeline[clusterIndex + 1] || null
+    promoteTarget: isCurrentVersion && promotionWouldChangeTarget
+      ? nextStage
       : null,
     rollbackTarget: isCurrentVersion && promotion?.canRollback?.[cluster]
       ? cluster

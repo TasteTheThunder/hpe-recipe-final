@@ -11,6 +11,12 @@ const promotion = {
     integration: true,
     prod: true,
   },
+  activeVersionOnCluster: {
+    dev: '0.0.8',
+    qa: '0.0.7',
+    integration: '0.0.6',
+    prod: '0.0.5',
+  },
   canRollback: {
     dev: true,
     qa: true,
@@ -35,6 +41,37 @@ test('environment actions follow the selected pipeline stage', () => {
   assert.deepEqual(getEnvironmentActions(pipeline, 'prod', promotion), {
     promoteTarget: null,
     rollbackTarget: 'prod',
+  });
+});
+
+test('environment actions hide no-op promotions when target already has same version', () => {
+  const syncedPromotion = {
+    deployedOn: {
+      dev: true,
+      qa: true,
+      integration: true,
+      prod: true,
+    },
+    activeVersionOnCluster: {
+      dev: '0.0.5',
+      qa: '0.0.5',
+      integration: '0.0.5',
+      prod: '0.0.5',
+    },
+    canRollback: {},
+  };
+
+  assert.deepEqual(getEnvironmentActions(pipeline, 'dev', syncedPromotion), {
+    promoteTarget: null,
+    rollbackTarget: null,
+  });
+  assert.deepEqual(getEnvironmentActions(pipeline, 'qa', syncedPromotion), {
+    promoteTarget: null,
+    rollbackTarget: null,
+  });
+  assert.deepEqual(getEnvironmentActions(pipeline, 'integration', syncedPromotion), {
+    promoteTarget: null,
+    rollbackTarget: null,
   });
 });
 
