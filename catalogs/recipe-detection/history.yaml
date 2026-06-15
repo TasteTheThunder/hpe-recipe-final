@@ -80,3 +80,8 @@
   version: 0.0.7
   env: dev
   fromVersion: 0.0.6
+- timestamp: '2026-06-15T11:17:45.567349904Z'
+  action: edit
+  version: 0.0.8
+  env: dev
+  fromVersion: 0.0.7
