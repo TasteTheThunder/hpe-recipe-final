@@ -171,9 +171,10 @@ const populateDestinationFromSources = (dest, sources) => {
   return dest;
 };
 
-const syncAllDraftSourceLinks = (drafts, cache) => {
+const syncAllDraftSourceLinks = (drafts, cache, currentReleaseVersion = '') => {
   const result = cloneDraftRecipes(drafts);
   const destsByLocalSourceVersion = new Map();
+  const normalizedCurrentReleaseVersion = normalizeVersion(currentReleaseVersion);
 
   result.forEach((dest) => {
     if (!dest.sourceEnabled || !dest.sourceReleaseVersion) return;
@@ -185,7 +186,8 @@ const syncAllDraftSourceLinks = (drafts, cache) => {
 
     populateDestinationFromSources(dest, sources);
 
-    if (dest.sourceReleaseVersion === DRAFT_SOURCE_RELEASE) {
+    const sourceIsCurrentRelease = normalizeVersion(dest.sourceReleaseVersion) === normalizedCurrentReleaseVersion;
+    if (dest.sourceReleaseVersion === DRAFT_SOURCE_RELEASE || sourceIsCurrentRelease) {
       sourceVersions.forEach((sv) => {
         const normalized = normalizeVersion(sv);
         if (!normalized) return;
@@ -215,7 +217,7 @@ const syncAllDraftSourceLinks = (drafts, cache) => {
     const prevRecipeAuto = Array.isArray(sourceDraft.upgradeToAuto) ? sourceDraft.upgradeToAuto : [];
     const recipeLinkTokens = linkedDests
       .map((d) => normalizeVersion(d.version))
-      .filter(Boolean);
+      .filter((v) => Boolean(v) && v !== sourceVersion);
     const recipeBase = existingRecipeTo.filter((v) => !prevRecipeAuto.includes(v));
     sourceDraft.upgradeTo = [...new Set(
       [...recipeBase, ...recipeLinkTokens].map((s) => String(s).trim()).filter(Boolean),
@@ -341,7 +343,7 @@ export default function CreateReleaseForm({
       });
   };
 
-  const runSourceSync = (drafts) => syncAllDraftSourceLinks(drafts, sourceRecipesCache);
+  const runSourceSync = (drafts) => syncAllDraftSourceLinks(drafts, sourceRecipesCache, version);
 
   const updateDraftSourceRelease = (recipeId, releaseVersion) => {
     if (releaseVersion && releaseVersion !== DRAFT_SOURCE_RELEASE) {
@@ -438,32 +440,6 @@ export default function CreateReleaseForm({
       if (r.id !== recipeId) return r;
       return { ...r, components: r.components.filter((_, i) => i !== index) };
     }));
-  };
-
-  const toggleDraftUpgradeTo = (recipeId, toVersion) => {
-    setDraftRecipes((prev) => runSourceSync(prev.map((r) => {
-      if (r.id !== recipeId) return r;
-      const base = r.upgradeTo || [];
-      const exists = base.includes(toVersion);
-      return {
-        ...r,
-        upgradeTo: exists ? base.filter((v) => v !== toVersion) : [...base, toVersion],
-        upgradeToTouched: true,
-      };
-    })));
-  };
-
-  const toggleDraftUpgradeFrom = (recipeId, fromVersion) => {
-    setDraftRecipes((prev) => runSourceSync(prev.map((r) => {
-      if (r.id !== recipeId) return r;
-      const base = r.upgradeFrom || [];
-      const exists = base.includes(fromVersion);
-      return {
-        ...r,
-        upgradeFrom: exists ? base.filter((v) => v !== fromVersion) : [...base, fromVersion],
-        upgradeFromTouched: true,
-      };
-    })));
   };
 
   const handleSubmit = (e) => {
@@ -717,15 +693,7 @@ export default function CreateReleaseForm({
                 </div>
               )}
 
-          {draftRecipes.map((recipe, recipeIndex) => {
-            const upgradeFromCandidates = draftRecipes
-              .slice(0, recipeIndex)
-              .filter((r) => r.version.trim())
-              .map((r) => r.version.trim());
-            const upgradeCandidates = draftRecipes
-              .slice(recipeIndex + 1)
-              .filter((r) => r.version.trim())
-              .map((r) => r.version.trim());
+          {draftRecipes.map((recipe) => {
             const effectiveUpgradeTo = recipe.upgradeTo || [];
             const effectiveUpgradeFrom = recipe.upgradeFrom || [];
                 const isExpanded = expandedRecipeIds.includes(recipe.id);
@@ -904,8 +872,7 @@ export default function CreateReleaseForm({
                     </div>
                   )}
                   <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>
-                    Auto-fills upgrade paths on the new recipe and, for draft sources in this release,
-                    adds the new recipe to each source&apos;s upgrade_to list (recipe and matching components).
+                    Auto-fills upgrade paths on the new recipe and links matching source recipes back to it.
                   </div>
                 </div>
 
@@ -1009,54 +976,6 @@ export default function CreateReleaseForm({
                     />
                   </div>
                 </div>
-
-                {upgradeFromCandidates.length > 0 && (
-                  <>
-                    <label style={{ ...labelStyle, marginBottom: 8 }}>Upgrade From</label>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-                      {upgradeFromCandidates.map((v) => (
-                        <button
-                          key={`${recipe.id}-from-${v}`}
-                          type="button"
-                          onClick={() => toggleDraftUpgradeFrom(recipe.id, v)}
-                          style={{
-                            padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                            background: effectiveUpgradeFrom.includes(v) ? `${T.blue}22` : T.bgSurface,
-                            color: effectiveUpgradeFrom.includes(v) ? T.blue : T.textMuted,
-                            border: `1px solid ${effectiveUpgradeFrom.includes(v) ? T.blue : T.border}`,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          v{v}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {upgradeCandidates.length > 0 && (
-                  <>
-                    <label style={{ ...labelStyle, marginBottom: 8 }}>Upgrade To</label>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      {upgradeCandidates.map((v) => (
-                        <button
-                          key={`${recipe.id}-${v}`}
-                          type="button"
-                          onClick={() => toggleDraftUpgradeTo(recipe.id, v)}
-                          style={{
-                            padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                            background: effectiveUpgradeTo.includes(v) ? `${T.teal}22` : T.bgSurface,
-                            color: effectiveUpgradeTo.includes(v) ? T.teal : T.textMuted,
-                            border: `1px solid ${effectiveUpgradeTo.includes(v) ? T.teal : T.border}`,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          v{v}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
                   </>
                 )}
               </div>
