@@ -60,3 +60,8 @@
   version: 0.0.3
   env: prod
   fromVersion: integration
+- timestamp: '2026-06-15T10:57:23.713816573Z'
+  action: edit
+  version: 0.0.5
+  env: dev
+  fromVersion: 0.0.4
