@@ -125,3 +125,8 @@
   version: 0.0.11
   env: integration
   fromVersion: qa
+- timestamp: '2026-06-15T14:59:14.507322657Z'
+  action: rollback
+  version: 0.0.5
+  env: integration
+  fromVersion: 0.0.11
