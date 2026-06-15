@@ -125,7 +125,7 @@ export default function ManagePage() {
     return payload;
   }
 
-  // Rollback an environment one step to its previous version (QA/INTEGRATION/PROD only).
+  // Rollback the selected environment one step to its previous version.
   // Confirmation here because it changes real cluster state.
   async function rollbackEnv(env) {
     if (!window.confirm(

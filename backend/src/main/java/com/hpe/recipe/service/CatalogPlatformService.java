@@ -83,13 +83,12 @@ public class CatalogPlatformService {
         Map<String, Boolean> deployedOn = new LinkedHashMap<>();
         Map<String, String> activeVersions = new LinkedHashMap<>();
         Map<String, Boolean> canRollback = new LinkedHashMap<>();
-        for (int i = 0; i < pipeline.size(); i++) {
-            String env = pipeline.get(i);
+        for (String env : pipeline) {
             String active = envs.get(env);
             activeVersions.put(env, active != null ? active : "");
             deployedOn.put(env, v.equals(active));
             List<String> hist = histories.getOrDefault(env, List.of());
-            canRollback.put(env, i > 0 && hist.size() >= 2);
+            canRollback.put(env, hist.size() >= 2);
         }
 
         // Forward-only: a version advances from the FURTHEST stage it currently occupies, one
@@ -184,13 +183,8 @@ public class CatalogPlatformService {
     /** Roll an environment back one step to the previous version it held, and redeploy it. */
     public void rollback(String env) {
         List<String> pipeline = pipeline();
-        int idx = pipeline.indexOf(env);
-        if (idx < 0) {
+        if (!pipeline.contains(env)) {
             throw new IllegalStateException("Unknown environment: " + env);
-        }
-        if (idx == 0) {
-            throw new IllegalStateException("Rollback is not available on " + env.toUpperCase()
-                    + " (it is edit-only; there is no previous promotion to undo)");
         }
         List<String> hist = gitState.readEnvironmentHistory(env);
         if (hist.size() < 2) {
@@ -207,17 +201,17 @@ public class CatalogPlatformService {
 
     /**
      * DEV-only editing: forks a NEW version (auto patch bump) from the current dev catalog plus
-     * the supplied edited content, sets dev to it, and deploys. Promoted versions are never
-     * mutated because every edit creates a new version. The version dev was previously running is
-     * not left stagnant on dev: it is moved forward exactly one stage to the next environment
-     * (e.g. qa), replacing what that stage held. Further stages advance only via manual promotion.
+     * the supplied edited content, sets dev to it, and deploys to DEV only. Every edit creates a
+     * new version, so promoted versions are never mutated. The previous version is left untouched
+     * on whatever environments already run it and remains in version history — it is NOT
+     * auto-promoted. Moving a version to the next environment is always a manual action via
+     * {@link #promote}, after qualification/testing.
      */
     public HelmRelease editDev(HelmRelease edited) {
         if (edited == null) {
             throw new IllegalArgumentException("Edited catalog body is required");
         }
-        List<String> pipeline = pipeline();
-        String dev = pipeline.get(0);
+        String dev = pipeline().get(0);
         String currentDev = gitState.readEnvironmentVersion(dev);
         if (currentDev == null || currentDev.isBlank()) {
             throw new IllegalStateException("Nothing to edit: dev has no deployed catalog version yet");
@@ -229,9 +223,6 @@ public class CatalogPlatformService {
         gitState.appendEnvironmentHistory(dev, newVersion);
         appendEvent("edit", newVersion, dev, currentDev);
         renderAndTrigger(newVersion, dev);
-        // The fork superseded currentDev on dev; move it forward one stage so it keeps flowing
-        // through the pipeline instead of remaining stagnant on dev.
-        promotePreviousDevVersion(pipeline, currentDev);
         return gitState.readVersion(newVersion);
     }
 
@@ -318,28 +309,6 @@ public class CatalogPlatformService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to deploy " + version + " to " + env + ": " + e.getMessage(), e);
         }
-    }
-
-    /**
-     * One-step forward promotion triggered by a DEV edit: move the version DEV was just running
-     * (now superseded by the fork) to the stage immediately after DEV, replacing whatever that
-     * stage held, record the history (so a one-step rollback still works), and redeploy it there.
-     * No-op when there is no next stage or it already runs that version. Stages beyond the next one
-     * are untouched, so an edit never auto-promotes past the second stage.
-     */
-    private void promotePreviousDevVersion(List<String> pipeline, String previousDevVersion) {
-        if (pipeline.size() < 2) {
-            return; // dev is the only stage — nowhere to promote
-        }
-        String dev = pipeline.get(0);
-        String nextEnv = pipeline.get(1);
-        if (previousDevVersion.equals(gitState.readEnvironmentVersion(nextEnv))) {
-            return; // the next stage already runs it — nothing to move
-        }
-        gitState.setEnvironmentVersion(nextEnv, previousDevVersion);
-        gitState.appendEnvironmentHistory(nextEnv, previousDevVersion);
-        appendEvent("promote", previousDevVersion, nextEnv, dev);
-        renderAndTrigger(previousDevVersion, nextEnv);
     }
 
     private void appendEvent(String action, String version, String env, String fromVersion) {

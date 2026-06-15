@@ -8,7 +8,12 @@ import {
   labelStyle,
 } from '../../ui/styles';
 import DeployPreviewModal from './DeployPreviewModal';
-import { normalizeRecipeDescription, getRecipeUpgradeFrom, getRecipeUpgradeTo } from './utils';
+import {
+  normalizeRecipeDescription,
+  getRecipeUpgradeFrom,
+  getRecipeUpgradeTo,
+  getEnvironmentActions,
+} from './utils';
 
 const API_BASE = '/api';
 
@@ -75,20 +80,8 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
 
   const pipeline = promotion?.pipeline || ['dev', 'qa', 'integration', 'prod'];
   const deployedOn = promotion?.deployedOn || {};
-  const firstStage = pipeline[0];
-  const isDeployedAnywhere = pipeline.some((env) => deployedOn[env]);
-  // Forward-only: promote to the backend's nextTarget. If the version isn't deployed anywhere
-  // yet, the only forward action is deploying it to the first stage (deploy-to-dev).
-  const deployTarget = promotion?.nextTarget || (!isDeployedAnywhere ? firstStage : null);
-  const canPromote = Boolean(deployTarget);
-  const deployLabel = !deployTarget
-    ? 'Promoted'
-    : deployTarget === firstStage
-      ? `Deploy to ${firstStage.toUpperCase()}`
-      : `Promote to ${deployTarget.toUpperCase()}`;
-  const canRollback = promotion?.canRollback || {};
-  // Environments (past the first stage) where THIS version is live and a previous version exists.
-  const rollbackEnvs = pipeline.filter((env, idx) => idx > 0 && deployedOn[env] && canRollback[env]);
+  const { promoteTarget, rollbackTarget } = getEnvironmentActions(pipeline, cluster, promotion);
+  const promoteLabel = promoteTarget ? `Promote to ${promoteTarget.toUpperCase()}` : '';
   // Editing is DEV-only, and only on the version currently live on DEV (the dev catalog).
   const devStage = pipeline[0];
   const isDevCatalog = cluster === devStage && Boolean(deployedOn[devStage]);
@@ -98,7 +91,7 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
     if (onEditCatalog) onEditCatalog(source);
   };
 
-  const handleConfirmDeploy = (version) => onDeploy(version, deployTarget);
+  const handleConfirmDeploy = (version) => onDeploy(version, promoteTarget);
 
   return (
     <div style={{
@@ -168,7 +161,7 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
               ...btnSecondary, padding: '6px 14px', fontSize: 12,
             }}>Edit Catalog</button>
           )}
-          {displayStatus !== 'deploying' && (
+          {displayStatus !== 'deploying' && promoteTarget && (
             <>
               <button onClick={handleDeploy} style={{
                 ...btnSecondary, padding: '6px 14px', fontSize: 12,
@@ -177,12 +170,10 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
                 onClick={handleDeploy}
                 style={{
                   ...btnPrimary, padding: '6px 14px', fontSize: 12,
-                  opacity: canPromote ? 1 : 0.5,
                 }}
-                disabled={!canPromote}
-                title={canPromote ? deployLabel : 'Fully promoted through all clusters'}
+                title={promoteLabel}
               >
-                {canPromote ? deployLabel : 'Promoted'}
+                {promoteLabel}
               </button>
             </>
           )}
@@ -200,16 +191,15 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
               <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
             </span>
           )}
-          {rollbackEnvs.map((env) => (
+          {rollbackTarget && (
             <button
-              key={`rollback-${env}`}
-              onClick={() => onRollback && onRollback(env)}
+              onClick={() => onRollback && onRollback(rollbackTarget)}
               style={{ ...btnSecondary, padding: '6px 14px', fontSize: 12 }}
-              title={`Roll ${env.toUpperCase()} back to its previous version`}
+              title={`Roll ${rollbackTarget.toUpperCase()} back to its previous version`}
             >
-              Rollback {env.toUpperCase()}
+              Rollback {rollbackTarget.toUpperCase()}
             </button>
-          ))}
+          )}
           <button onClick={handleDeleteRelease} style={{ ...btnDanger, padding: '6px 14px', fontSize: 12, borderRadius: 8 }}>Delete</button>
         </div>
       </div>
@@ -347,7 +337,7 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
       {showDeployPreview && (
         <DeployPreviewModal
           version={release.version}
-          cluster={deployTarget}
+          cluster={promoteTarget}
           onClose={() => setShowDeployPreview(false)}
           onConfirm={handleConfirmDeploy}
         />

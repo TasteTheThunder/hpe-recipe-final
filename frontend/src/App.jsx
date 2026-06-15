@@ -17,6 +17,7 @@ import VersionTimeline from "./components/visualizer/VersionTimeline";
 import DetailPanel from "./components/visualizer/DetailPanel";
 import CompareView from "./components/visualizer/CompareView";
 import StatsBar from "./components/visualizer/StatsBar";
+import { getDeployedReleases } from "./components/visualizer/utils";
 
 const API_BASE = "/api";
 
@@ -48,6 +49,10 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   const loading = releasesLoading || detailLoading;
+  const deployedReleases = useMemo(
+    () => (releasesLoading ? [] : getDeployedReleases(helmReleases)),
+    [helmReleases, releasesLoading],
+  );
 
   useEffect(() => {
     const urlCluster = allowedClusters.includes(searchParams.get("cluster"))
@@ -68,10 +73,13 @@ export default function App() {
   }, [cluster, searchParams, setSearchParams, allowedClusters]);
 
   useEffect(() => {
-    if (versionParam && helmReleases.some((r) => r.version === versionParam)) {
+    if (
+      versionParam &&
+      deployedReleases.some((r) => r.version === versionParam)
+    ) {
       setSelectedVersion(versionParam);
     }
-  }, [versionParam, helmReleases]);
+  }, [versionParam, deployedReleases]);
 
   // Sync error from realtime hook
   useEffect(() => {
@@ -92,7 +100,7 @@ export default function App() {
     // Wait until releases for the current cluster are loaded, then validate selection.
     if (releasesLoading) return;
 
-    const existsInCluster = helmReleases.some(
+    const existsInCluster = deployedReleases.some(
       (r) => r.version === selectedVersion,
     );
     if (!existsInCluster) {
@@ -133,7 +141,7 @@ export default function App() {
     selectedVersion,
     cluster,
     releasesLoading,
-    helmReleases,
+    deployedReleases,
     setNodes,
     setEdges,
   ]);
@@ -254,7 +262,7 @@ export default function App() {
             RELEASES
           </span>
           <VersionTimeline
-            releases={helmReleases}
+            releases={deployedReleases}
             selected={selectedVersion}
             onSelect={setSelectedVersion}
             cluster={cluster}
@@ -279,7 +287,7 @@ export default function App() {
               gap: 6,
             }}
           >
-            ← All Catalogs
+            ← Catalog
           </Link>
           {selectedVersion && (
             <button
@@ -409,7 +417,7 @@ export default function App() {
                     display: "inline-block",
                   }}
                 >
-                  View All Catalogs
+                  View Catalog
                 </Link>
               )}
             </div>

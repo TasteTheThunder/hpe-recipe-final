@@ -35,10 +35,34 @@ function getRecipeUpgradeFrom(recipes, recipe) {
     .filter(Boolean);
 }
 
+function getEnvironmentActions(pipeline, cluster, promotion) {
+  const clusterIndex = pipeline.indexOf(cluster);
+  const isCurrentVersion = Boolean(promotion?.deployedOn?.[cluster]);
+
+  return {
+    promoteTarget: isCurrentVersion && clusterIndex >= 0
+      ? pipeline[clusterIndex + 1] || null
+      : null,
+    rollbackTarget: isCurrentVersion && promotion?.canRollback?.[cluster]
+      ? cluster
+      : null,
+  };
+}
+
+function getSourceReleaseOptions(releases, editMode, currentVersion) {
+  if (!Array.isArray(releases)) return [];
+  if (editMode) {
+    return releases.filter((release) => release?.status === 'deployed');
+  }
+  return releases.filter((release) => release?.version !== currentVersion);
+}
+
 export {
   normalizeRecipeDescription,
   parseUpgradeList,
   normalizeVersion,
   getRecipeUpgradeTo,
   getRecipeUpgradeFrom,
+  getEnvironmentActions,
+  getSourceReleaseOptions,
 };

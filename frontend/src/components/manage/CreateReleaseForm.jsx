@@ -8,7 +8,12 @@ import {
   cardStyle,
   labelStyle,
 } from '../../ui/styles';
-import { normalizeRecipeDescription, parseUpgradeList, normalizeVersion } from './utils';
+import {
+  normalizeRecipeDescription,
+  parseUpgradeList,
+  normalizeVersion,
+  getSourceReleaseOptions,
+} from './utils';
 
 const API_BASE = '/api';
 const DRAFT_SOURCE_RELEASE = '__draft__';
@@ -286,13 +291,15 @@ export default function CreateReleaseForm({
   });
 
   const autoReleaseName = cluster ? `recipe-${cluster}` : '';
+  const sourceCluster = editMode ? 'dev' : cluster;
+  const sourceReleaseOptions = getSourceReleaseOptions(availableReleases, editMode, version.trim());
 
   useEffect(() => {
-    fetch(`${API_BASE}/helm-releases?cluster=${cluster}`)
+    fetch(`${API_BASE}/helm-releases?cluster=${sourceCluster}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data) => setAvailableReleases(Array.isArray(data) ? data : []))
       .catch(() => setAvailableReleases([]));
-  }, [cluster]);
+  }, [sourceCluster]);
 
   // Edit mode: pre-fill the form from the current DEV catalog so saving forks a new version.
   useEffect(() => {
@@ -317,7 +324,7 @@ export default function CreateReleaseForm({
       [releaseVersion]: { recipes: [], loading: true, loaded: false, error: null },
     }));
 
-    fetch(`${API_BASE}/helm-releases/${releaseVersion}?cluster=${cluster}`)
+    fetch(`${API_BASE}/helm-releases/${releaseVersion}?cluster=${sourceCluster}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data) => {
         const recipes = Array.isArray(data?.recipes) ? data.recipes : [];
@@ -810,12 +817,12 @@ export default function CreateReleaseForm({
                           onChange={(e) => updateDraftSourceRelease(recipe.id, e.target.value)}
                         >
                           <option value="">Select release</option>
-                          <option value={DRAFT_SOURCE_RELEASE}>This release (draft recipes)</option>
-                          {availableReleases
-                            .filter((r) => r.version !== version.trim())
-                            .map((r) => (
-                              <option key={`source-${recipe.id}-${r.version}`} value={r.version}>v{r.version}</option>
-                            ))}
+                          {!editMode && (
+                            <option value={DRAFT_SOURCE_RELEASE}>This release (draft recipes)</option>
+                          )}
+                          {sourceReleaseOptions.map((r) => (
+                            <option key={`source-${recipe.id}-${r.version}`} value={r.version}>v{r.version}</option>
+                          ))}
                         </select>
                       </div>
                       <div>

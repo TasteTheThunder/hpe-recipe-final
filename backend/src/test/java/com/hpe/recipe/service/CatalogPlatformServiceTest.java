@@ -95,7 +95,7 @@ class CatalogPlatformServiceTest {
     }
 
     @Test
-    void rollbackIsOneStepAndQaIntProdOnly() {
+    void rollbackIsOneStepForAnyEnvironment() {
         RecordingJenkins jenkins = new RecordingJenkins();
         CatalogPlatformService svc = newPlatform(jenkins);
         svc.createVersion(sampleRelease("0.16"));
@@ -114,8 +114,13 @@ class CatalogPlatformServiceTest {
 
         // no previous left -> disabled
         assertThatThrownBy(() -> svc.rollback("qa")).isInstanceOf(IllegalStateException.class);
-        // dev is edit-only -> rollback not offered
-        assertThatThrownBy(() -> svc.rollback("dev")).isInstanceOf(IllegalStateException.class);
+
+        // dev history is also rollback-capable after an edit.
+        Map<?, ?> rollbackOptions = (Map<?, ?>) svc.promotionOptions("0.17").get("canRollback");
+        assertThat(rollbackOptions.get("dev")).isEqualTo(true);
+        svc.rollback("dev");
+        assertThat(svc.environments()).containsEntry("dev", "0.16");
+        assertThat(jenkins.triggers).contains("dev@0.16");
     }
 
     @Test
@@ -135,39 +140,45 @@ class CatalogPlatformServiceTest {
     }
 
     @Test
-    void editingDevPromotesPreviousVersionOneStageToNextEnv() {
-        RecordingJenkins jenkins = new RecordingJenkins();
-        CatalogPlatformService svc = newPlatform(jenkins);
+    void devEditsNeverAutoPromoteAndPromotionIsManual() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+
+        // 1. Create 0.0.1 and deploy it to DEV.
         svc.createVersion(sampleRelease("0.0.1"));
         svc.deployToDev("0.0.1");
-        svc.promote("0.0.1", "qa");
-        svc.promote("0.0.1", "integration");
-        svc.promote("0.0.1", "prod");          // every environment running 0.0.1
 
-        // First edit: dev 0.0.1 -> 0.0.2. The previous dev version (0.0.1) is already on qa,
-        // so qa is unchanged and nothing cascades.
-        svc.editDev(sampleRelease("ignored")); // forks 0.0.2 onto dev
+        // 2-3. Iterate in DEV (bug fixes): 0.0.1 -> 0.0.2 -> 0.0.3 -> 0.0.4 -> 0.0.5. None of these
+        // edits may move a version to QA/INTEGRATION/PROD — only DEV ever holds a version.
+        svc.editDev(sampleRelease("ignored")); // 0.0.2
+        svc.editDev(sampleRelease("ignored")); // 0.0.3
+        svc.editDev(sampleRelease("ignored")); // 0.0.4
+        svc.editDev(sampleRelease("ignored")); // 0.0.5
+        assertThat(svc.environments()).containsEntry("dev", "0.0.5").hasSize(1);
+
+        // 4. After DEV qualification, MANUALLY promote 0.0.5 to QA.
+        svc.promote("0.0.5", "qa");
+        assertThat(svc.environments()).containsEntry("dev", "0.0.5").containsEntry("qa", "0.0.5");
+
+        // 5. QA finds a bug -> edit creates 0.0.6 and deploys to DEV ONLY; QA still runs 0.0.5
+        // (no automatic promotion just because a new version was created).
+        svc.editDev(sampleRelease("ignored")); // 0.0.6 onto DEV
         assertThat(svc.environments())
-                .containsEntry("dev", "0.0.2")
-                .containsEntry("qa", "0.0.1")
-                .containsEntry("integration", "0.0.1")
-                .containsEntry("prod", "0.0.1");
+                .containsEntry("dev", "0.0.6")
+                .containsEntry("qa", "0.0.5");
 
-        // Second edit: dev 0.0.2 -> 0.0.3. Now the superseded dev version (0.0.2) moves forward
-        // one stage to qa, replacing qa's 0.0.1. Integration and prod stay put (manual promote only).
-        svc.editDev(sampleRelease("ignored")); // forks 0.0.3 onto dev
+        // After DEV testing passes, MANUALLY promote 0.0.6 to QA -> it replaces 0.0.5.
+        svc.promote("0.0.6", "qa");
         assertThat(svc.environments())
-                .containsEntry("dev", "0.0.3")
-                .containsEntry("qa", "0.0.2")
-                .containsEntry("integration", "0.0.1")
-                .containsEntry("prod", "0.0.1");
+                .containsEntry("dev", "0.0.6")
+                .containsEntry("qa", "0.0.6");
 
-        // qa was redeployed with the moved version...
-        assertThat(jenkins.triggers).contains("qa@0.0.2");
-        // ...and qa keeps an ordered history so a one-step rollback (0.0.2 -> 0.0.1) still works.
+        // Previous versions remain in each environment's deployment history (for rollback), and
+        // each environment's history is independent.
         GitStateService fresh = new GitStateService(
                 remoteUri, tmp.resolve("verify-clone").toString(), "main", "user", "");
-        assertThat(fresh.readEnvironmentHistory("qa")).containsExactly("0.0.1", "0.0.2");
+        assertThat(fresh.readEnvironmentHistory("dev"))
+                .containsExactly("0.0.1", "0.0.2", "0.0.3", "0.0.4", "0.0.5", "0.0.6");
+        assertThat(fresh.readEnvironmentHistory("qa")).containsExactly("0.0.5", "0.0.6");
     }
 
     @Test
