@@ -1,2 +1,5 @@
-[
-  ]
+- timestamp: '2026-06-16T09:09:59.276006135Z'
+  action: promote
+  version: 0.0.11
+  env: integration
+  fromVersion: qa
