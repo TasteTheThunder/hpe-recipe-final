@@ -1,102 +1,32 @@
-- timestamp: '2026-06-14T06:52:53.347088938Z'
+- timestamp: '2026-06-16T09:49:44.002119465Z'
+  action: create
+  version: 2.1.1
+- timestamp: '2026-06-16T09:49:50.848189223Z'
   action: deploy
-  version: 0.0.1
+  version: 2.1.1
   env: dev
-- timestamp: '2026-06-14T07:14:22.195199787Z'
+- timestamp: '2026-06-16T09:50:32.901879887Z'
   action: promote
-  version: 0.0.1
+  version: 2.1.1
   env: qa
   fromVersion: dev
-- timestamp: '2026-06-14T07:20:57.062236887Z'
-  action: edit
-  version: 0.0.2
-  env: dev
-  fromVersion: 0.0.1
-- timestamp: '2026-06-14T09:15:32.410480229Z'
+- timestamp: '2026-06-16T09:51:05.689750711Z'
   action: promote
-  version: 0.0.1
+  version: 2.1.1
   env: integration
   fromVersion: qa
-- timestamp: '2026-06-14T09:16:23.055356138Z'
+- timestamp: '2026-06-16T09:51:35.464793195Z'
   action: promote
-  version: 0.0.1
+  version: 2.1.1
   env: prod
   fromVersion: integration
-- timestamp: '2026-06-14T09:17:13.956523139Z'
+- timestamp: '2026-06-16T10:32:54.204066647Z'
+  action: edit
+  version: 2.1.2
+  env: dev
+  fromVersion: 2.1.1
+- timestamp: '2026-06-16T10:33:34.815413752Z'
   action: promote
-  version: 0.0.2
+  version: 2.1.2
   env: qa
   fromVersion: dev
-- timestamp: '2026-06-14T09:17:58.719228788Z'
-  action: rollback
-  version: 0.0.1
-  env: qa
-  fromVersion: 0.0.2
-- timestamp: '2026-06-14T09:26:00.446941565Z'
-  action: edit
-  version: 0.0.3
-  env: dev
-  fromVersion: 0.0.2
-- timestamp: '2026-06-14T14:25:56.850628672Z'
-  action: edit
-  version: 0.0.4
-  env: dev
-  fromVersion: 0.0.3
-- timestamp: '2026-06-14T14:26:08.238079478Z'
-  action: promote
-  version: 0.0.3
-  env: qa
-  fromVersion: dev
-- timestamp: '2026-06-14T14:27:43.306052472Z'
-  action: delete
-  version: 0.0.2
-- timestamp: '2026-06-14T15:28:51.069664427Z'
-  action: promote
-  version: 0.0.3
-  env: integration
-  fromVersion: qa
-- timestamp: '2026-06-15T06:01:19.939025927Z'
-  action: promote
-  version: 0.0.3
-  env: prod
-  fromVersion: integration
-- timestamp: '2026-06-15T10:57:23.713816573Z'
-  action: edit
-  version: 0.0.5
-  env: dev
-  fromVersion: 0.0.4
-- timestamp: '2026-06-15T10:59:13.255152352Z'
-  action: promote
-  version: 0.0.5
-  env: qa
-  fromVersion: dev
-- timestamp: '2026-06-15T11:01:34.921874802Z'
-  action: edit
-  version: 0.0.6
-  env: dev
-  fromVersion: 0.0.5
-- timestamp: '2026-06-15T11:16:18.252902380Z'
-  action: edit
-  version: 0.0.7
-  env: dev
-  fromVersion: 0.0.6
-- timestamp: '2026-06-15T11:17:45.567349904Z'
-  action: edit
-  version: 0.0.8
-  env: dev
-  fromVersion: 0.0.7
-- timestamp: '2026-06-15T11:23:34.960810280Z'
-  action: edit
-  version: 0.0.9
-  env: dev
-  fromVersion: 0.0.8
-- timestamp: '2026-06-15T11:24:40.447265569Z'
-  action: edit
-  version: 0.0.10
-  env: dev
-  fromVersion: 0.0.9
-- timestamp: '2026-06-15T11:26:15.409110662Z'
-  action: promote
-  version: 0.0.5
-  env: integration
-  fromVersion: qa

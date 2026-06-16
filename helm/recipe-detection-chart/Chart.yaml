@@ -2,8 +2,8 @@ apiVersion: v2
 name: recipe-detection
 description: HPE Recipe Detection Service - detects and manages software recipe versions
 type: application
-version: 0.0.5
-appVersion: "0.0.5"
+version: 2.1.2
+appVersion: "2.1.2"
 maintainers:
   - name: HPE Recipe Detection Team
 keywords:
@@ -11,4 +11,4 @@ keywords:
   - detection
   - hpe
 annotations:
-recipe-detection/values-file: values-v0.0.5.yaml
+recipe-detection/values-file: values-v2.1.2.yaml
