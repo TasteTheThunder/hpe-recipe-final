@@ -51,3 +51,7 @@ scripts/setup-env.ps1
 #custom 
 README_GITHUB_SETUP.md
 SETUP.md
+
+# Local agent/tooling state
+.codex/
+.agents/
