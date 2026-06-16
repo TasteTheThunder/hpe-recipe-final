@@ -20,3 +20,8 @@
   version: 2.1.1
   env: prod
   fromVersion: integration
+- timestamp: '2026-06-16T10:32:54.204066647Z'
+  action: edit
+  version: 2.1.2
+  env: dev
+  fromVersion: 2.1.1
