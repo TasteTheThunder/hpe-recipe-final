@@ -19,3 +19,6 @@
   action: uninstall
   version: 0.0.5
   env: prod
+- timestamp: '2026-06-16T09:36:55.772861729Z'
+  action: delete
+  version: 0.0.5
