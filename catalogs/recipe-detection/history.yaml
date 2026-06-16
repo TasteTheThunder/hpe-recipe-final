@@ -6,3 +6,6 @@
   action: uninstall
   version: 1.1.1
   env: dev
+- timestamp: '2026-06-16T09:45:18.261390090Z'
+  action: delete
+  version: 1.1.1
