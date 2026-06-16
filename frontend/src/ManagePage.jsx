@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import useRealtimeReleases from './hooks/useRealtimeReleases';
 import T from './theme';
-import { btnSecondary, cardStyle } from './ui/styles';
+import { btnDanger, btnSecondary, cardStyle } from './ui/styles';
 import Toast from './components/manage/Toast';
 import CreateReleaseForm from './components/manage/CreateReleaseForm';
 import ReleaseCard from './components/manage/ReleaseCard';
@@ -146,11 +146,34 @@ export default function ManagePage() {
     refresh();
   }
 
+  async function clearHistory() {
+    if (!window.confirm(
+      'Clear deployment history?\n\n'
+      + 'This only clears the History UI event log. Environment rollback history is untouched.')) {
+      return;
+    }
+    const response = await fetch(`${API_BASE}/history`, { method: 'DELETE' });
+    let payload = {};
+    try { payload = await response.json(); } catch { payload = {}; }
+    if (!response.ok) {
+      const message = payload.error || 'Failed to clear deployment history';
+      notify(message, true);
+      window.alert(message);
+      return;
+    }
+    setHistory([]);
+    notify(payload.message || 'Deployment history cleared');
+  }
+
   const pipelineLabel = pipeline.map((p) => p.toUpperCase()).join(' → ');
   const isEmptySystem = versionCount === 0;
   // The environment view shows only the version currently deployed in the selected cluster
   // (status 'deployed' == the env's current pointer). Every version stays visible in History.
   const deployedReleases = releases.filter((r) => r.status === 'deployed');
+  const devStage = pipeline[0];
+  const isDevView = cluster === devStage;
+  const devHasNoDeployment = isDevView && !loading && deployedReleases.length === 0;
+  const showCreateForm = isDevView && (isEmptySystem || devHasNoDeployment);
 
   return (
     <div style={{
@@ -243,17 +266,17 @@ export default function ManagePage() {
 
       {/* Content */}
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px' }}>
-        {showHistory && <DeploymentHistory history={history} />}
+        {showHistory && <DeploymentHistory history={history} onClear={clearHistory} />}
 
-        {/* Create is available only on an empty system (cold start). Otherwise edit the dev
-            catalog, which forks a new version. */}
-        {isEmptySystem && (
+        {/* Create is available from DEV when the system is empty, or when DEV has no active catalog.
+            Otherwise edit the active DEV catalog, which forks a new version. */}
+        {showCreateForm && (
           <CreateReleaseForm onCreated={(msg, isError) => {
             notify(msg, isError);
             if (!isError) refresh();
-          }} cluster={cluster} />
+          }} cluster={cluster} createDevBootstrap={!isEmptySystem} />
         )}
-        {versionCount !== null && versionCount > 0 && (
+        {versionCount !== null && versionCount > 0 && !devHasNoDeployment && (
           <div style={{
             ...cardStyle, marginBottom: 16, fontSize: 13, color: T.textMuted,
             display: 'flex', alignItems: 'flex-start', gap: 10,
@@ -263,6 +286,18 @@ export default function ManagePage() {
               A catalog already exists. New versions are created by editing the{' '}
               <strong style={{ color: T.text }}>DEV</strong> catalog (each edit forks a new version);
               other environments receive versions via promotion.
+            </span>
+          </div>
+        )}
+        {versionCount !== null && versionCount > 0 && devHasNoDeployment && (
+          <div style={{
+            ...cardStyle, marginBottom: 16, fontSize: 13, color: T.textMuted,
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <span style={{ fontSize: 16, flexShrink: 0, lineHeight: 1.5 }}>✎</span>
+            <span style={{ lineHeight: 1.5 }}>
+              DEV has no deployed catalog. Create a new DEV catalog above to restart the pipeline;
+              existing catalog versions remain available in History.
             </span>
           </div>
         )}
@@ -299,7 +334,9 @@ export default function ManagePage() {
                   Nothing deployed in {cluster.toUpperCase()}
                 </div>
                 <div style={{ fontSize: 13, color: T.textMuted }}>
-                  No catalog version is currently deployed in {cluster.toUpperCase()}. Promote a version here, or see all versions in History.
+                  {isDevView
+                    ? 'No catalog version is currently deployed in DEV. Create a new DEV catalog above, or see all versions in History.'
+                    : `No catalog version is currently deployed in ${cluster.toUpperCase()}. Promote a version here, or see all versions in History.`}
                 </div>
               </>
             )}
@@ -326,7 +363,7 @@ export default function ManagePage() {
 // ============================================================================
 // Deployment History — reads the Git-backed event log (GET /api/history)
 // ============================================================================
-function DeploymentHistory({ history }) {
+function DeploymentHistory({ history, onClear }) {
   const actionColor = {
     create: T.textMuted,
     deploy: T.blue,
@@ -337,7 +374,22 @@ function DeploymentHistory({ history }) {
   const ordered = [...history].reverse(); // newest first
   return (
     <div style={{ ...cardStyle, marginBottom: 16 }}>
-      <h3 style={{ margin: '0 0 12px', fontSize: 15, color: T.text }}>Deployment History</h3>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 12, marginBottom: 12,
+      }}>
+        <h3 style={{ margin: 0, fontSize: 15, color: T.text }}>Deployment History</h3>
+        {ordered.length > 0 && (
+          <button
+            type="button"
+            onClick={onClear}
+            style={{ ...btnDanger, padding: '5px 12px', fontSize: 11 }}
+            title="Clear only the deployment event log; rollback history is untouched"
+          >
+            Clear History
+          </button>
+        )}
+      </div>
       {ordered.length === 0 && (
         <div style={{ fontSize: 13, color: T.textMuted }}>No events recorded yet.</div>
       )}

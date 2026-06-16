@@ -249,6 +249,7 @@ const syncAllDraftSourceLinks = (drafts, cache, currentReleaseVersion = '') => {
 
 export default function CreateReleaseForm({
   cluster, onCreated, editMode = false, initialCatalog = null, nextVersionPreview = '',
+  createDevBootstrap = false,
 }) {
   const [version, setVersion] = useState('');
   const [valuesFileName, setValuesFileName] = useState('');
@@ -515,8 +516,13 @@ export default function CreateReleaseForm({
       maintainer: maintainer.trim(),
       recipes: recipesPayload,
     };
-    // Edit mode forks a NEW version on DEV via the platform endpoint; create posts a brand-new release.
-    const url = editMode ? `${API_BASE}/catalog/edit` : `${API_BASE}/helm-releases?cluster=${cluster}`;
+    // Edit mode forks a NEW version on DEV via the platform endpoint. DEV bootstrap creates and
+    // deploys the first-stage catalog when DEV currently has no active version.
+    const url = editMode
+      ? `${API_BASE}/catalog/edit`
+      : createDevBootstrap
+        ? `${API_BASE}/versions?deployToDev=true`
+        : `${API_BASE}/helm-releases?cluster=${cluster}`;
 
     setSubmitting(true);
     fetch(url, {
@@ -546,7 +552,9 @@ export default function CreateReleaseForm({
         setMaintainer('');
         setDraftRecipes([]);
         setExpandedRecipeIds([]);
-        onCreated(`Helm release created with ${recipesPayload.length} recipe${recipesPayload.length > 1 ? 's' : ''}`);
+        onCreated(createDevBootstrap
+          ? `New version v${saved?.version || version.trim()} created — deploying to DEV`
+          : `Helm release created with ${recipesPayload.length} recipe${recipesPayload.length > 1 ? 's' : ''}`);
       })
       .catch((err) => onCreated(err.message, true))
       .finally(() => setSubmitting(false));
@@ -558,6 +566,15 @@ export default function CreateReleaseForm({
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: T.teal }} />
         {editMode ? 'Edit DEV Catalog' : 'New Helm Release'}
       </h3>
+      {createDevBootstrap && !editMode && (
+        <div style={{
+          marginBottom: 16, padding: '8px 14px', borderRadius: 8,
+          background: `${T.blue}12`, border: `1px solid ${T.blue}33`,
+          fontSize: 12, color: T.blue,
+        }}>
+          DEV has no deployed catalog — creating here will deploy the new version to DEV.
+        </div>
+      )}
       {editMode && (
         <div style={{
           marginBottom: 16, padding: '8px 14px', borderRadius: 8,

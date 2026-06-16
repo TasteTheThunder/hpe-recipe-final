@@ -126,6 +126,20 @@ class GitStateServiceTest {
     }
 
     @Test
+    void clearHistoryLeavesEnvironmentHistoryUntouched() {
+        GitStateService svc = newService("clone-a");
+        svc.appendHistoryEvent(event("deploy", "v0.16", "dev", null));
+        svc.appendEnvironmentHistory("dev", "v0.15");
+        svc.appendEnvironmentHistory("dev", "v0.16");
+
+        svc.clearHistory();
+
+        GitStateService fresh = newService("clone-b");
+        assertThat(fresh.readHistory()).isEmpty();
+        assertThat(fresh.readEnvironmentHistory("dev")).containsExactly("v0.15", "v0.16");
+    }
+
+    @Test
     void rejectsPathTraversalIds() {
         GitStateService svc = newService("clone-a");
         assertThatThrownBy(() -> svc.writeVersion(sampleRelease("../../evil")))

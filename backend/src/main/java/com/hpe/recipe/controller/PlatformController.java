@@ -69,13 +69,28 @@ public class PlatformController {
         return platform.history();
     }
 
+    @DeleteMapping("/history")
+    public ResponseEntity<?> clearHistory() {
+        return execute(() -> {
+            platform.clearHistory();
+            return Map.of("message", "Deployment history cleared");
+        });
+    }
+
     // ===================== WRITES =====================
 
     @PostMapping("/versions")
-    public ResponseEntity<?> create(@RequestBody HelmRelease release) {
+    public ResponseEntity<?> create(@RequestBody HelmRelease release,
+                                    @RequestParam(defaultValue = "false") boolean deployToDev) {
         try {
-            HelmRelease created = platform.createVersion(release);
+            HelmRelease created = deployToDev
+                    ? platform.createAndDeployToDev(release)
+                    : platform.createVersion(release);
             wsHandler.broadcast("version_created", Map.of("version", created.getVersion()));
+            if (deployToDev) {
+                String dev = platform.pipeline().get(0);
+                broadcastDeploying(created.getVersion(), dev);
+            }
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

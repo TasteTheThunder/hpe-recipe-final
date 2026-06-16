@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import T from '../../theme';
 import {
   btnPrimary,
-  btnDanger,
   btnSecondary,
   cardStyle,
   labelStyle,
@@ -47,24 +46,6 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
       .then((data) => setPromotion(data))
       .catch(() => setPromotion(null));
   }, [release.version, release.status]);
-
-  const handleDeleteRelease = () => {
-    if (!window.confirm(
-      `Delete catalog version ${release.version}?\n\n`
-      + 'This removes the version from Git and runs "helm uninstall" in every environment '
-      + 'currently running it. This cannot be undone.')) return;
-    fetch(`${API_BASE}/versions/${release.version}`, { method: 'DELETE' })
-      .then(async (r) => {
-        if (!r.ok) {
-          let payload = {};
-          try { payload = await r.json(); } catch { payload = {}; }
-          throw new Error(payload.error || 'Failed to delete');
-        }
-        onNotify('Version deleted; uninstalling from affected environments');
-        onRefresh();
-      })
-      .catch((err) => onNotify(err.message, true));
-  };
 
   const recipes = detail?.recipes || [];
   const displayStatus = detail?.status || release.status;
@@ -200,7 +181,6 @@ export default function ReleaseCard({ release, onDeploy, onRollback, onEditCatal
               Rollback {rollbackTarget.toUpperCase()}
             </button>
           )}
-          <button onClick={handleDeleteRelease} style={{ ...btnDanger, padding: '6px 14px', fontSize: 12, borderRadius: 8 }}>Delete</button>
         </div>
       </div>
 

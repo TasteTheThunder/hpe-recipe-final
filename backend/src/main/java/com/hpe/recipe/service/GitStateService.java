@@ -284,6 +284,12 @@ public class GitStateService {
         });
     }
 
+    /** Clear only the human-facing Deployment History event log. Rollback histories are untouched. */
+    public void clearHistory() {
+        mutate("catalog: clear deployment history", repo ->
+                writeFile(new File(repo, HISTORY_FILE), dumpYaml().dump(new ArrayList<>())));
+    }
+
     // ===================== GIT MECHANICS =====================
 
     private <T> T read(Function<File, T> reader) {

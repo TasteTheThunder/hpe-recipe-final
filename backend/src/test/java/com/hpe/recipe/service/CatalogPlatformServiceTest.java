@@ -63,6 +63,47 @@ class CatalogPlatformServiceTest {
     }
 
     @Test
+    void createAndDeployToDevIsAllowedWhenDevHasNoActiveCatalog() {
+        RecordingJenkins jenkins = new RecordingJenkins();
+        GitStateService gs = new GitStateService(
+                remoteUri, tmp.resolve("state-clone").toString(), "main", "user", "");
+        CatalogPlatformService svc = new CatalogPlatformService(
+                gs, new NoopGitOps(), jenkins, new PromotionProperties());
+
+        gs.writeVersion(sampleRelease("0.15")); // historical/catalog version exists, but DEV is empty
+
+        HelmRelease created = svc.createAndDeployToDev(sampleRelease("0.16"));
+
+        assertThat(created.getVersion()).isEqualTo("0.16");
+        assertThat(svc.environments()).containsEntry("dev", "0.16");
+        assertThat(gs.readEnvironmentHistory("dev")).containsExactly("0.16");
+        assertThat(jenkins.triggers).contains("dev@0.16");
+        assertThat(svc.history()).extracting(e -> e.get("action")).contains("create", "deploy");
+    }
+
+    @Test
+    void createAndDeployToDevRequiresEmptyDevAndNewVersion() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+        svc.createVersion(sampleRelease("0.16"));
+        svc.deployToDev("0.16");
+
+        assertThatThrownBy(() -> svc.createAndDeployToDev(sampleRelease("0.17")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("DEV has no deployed catalog");
+
+        GitStateService gs = new GitStateService(
+                remoteUri, tmp.resolve("state-clone-duplicate").toString(), "main", "user", "");
+        gs.deleteEnvironment("dev");
+        CatalogPlatformService devEmpty = new CatalogPlatformService(
+                gs, new NoopGitOps(), new RecordingJenkins(), new PromotionProperties());
+        gs.writeVersion(sampleRelease("0.18"));
+
+        assertThatThrownBy(() -> devEmpty.createAndDeployToDev(sampleRelease("0.18")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Version already exists");
+    }
+
+    @Test
     void deployToDevWritesGitStateAndTriggersJenkins() {
         RecordingJenkins jenkins = new RecordingJenkins();
         CatalogPlatformService svc = newPlatform(jenkins);
@@ -293,6 +334,22 @@ class CatalogPlatformServiceTest {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         assertThatThrownBy(() -> svc.deleteVersion("../../evil"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void clearHistoryClearsOnlyDeploymentEventLog() {
+        CatalogPlatformService svc = newPlatform(new RecordingJenkins());
+        svc.createVersion(sampleRelease("0.16"));
+        svc.deployToDev("0.16");
+
+        assertThat(svc.history()).isNotEmpty();
+        svc.clearHistory();
+
+        assertThat(svc.history()).isEmpty();
+        GitStateService fresh = new GitStateService(
+                remoteUri, tmp.resolve("verify-clone").toString(), "main", "user", "");
+        assertThat(fresh.readEnvironmentHistory("dev")).containsExactly("0.16");
+        assertThat(fresh.readEnvironmentVersion("dev")).isEqualTo("0.16");
     }
 
     // ---------- helpers / stubs ----------

@@ -63,6 +63,10 @@ public class CatalogPlatformService {
         return gitState.readHistory();
     }
 
+    public void clearHistory() {
+        gitState.clearHistory();
+    }
+
     public HelmRelease version(String version) {
         return gitState.readVersion(normalize(version));
     }
@@ -143,6 +147,29 @@ public class CatalogPlatformService {
         release.setVersion(version);
         gitState.writeVersion(release);
         appendEvent("create", version, null, null);
+        return gitState.readVersion(version);
+    }
+
+    /** Create a brand-new catalog version and deploy it to the first stage when DEV is empty. */
+    public HelmRelease createAndDeployToDev(HelmRelease release) {
+        if (release == null) {
+            throw new IllegalArgumentException("Release body is required");
+        }
+        String dev = pipeline().get(0);
+        String currentDev = gitState.readEnvironmentVersion(dev);
+        if (currentDev != null && !currentDev.isBlank()) {
+            throw new IllegalStateException(
+                    "Create is only available when " + dev.toUpperCase()
+                            + " has no deployed catalog (use Edit on dev to fork a new version)");
+        }
+        String version = normalize(release.getVersion());
+        if (gitState.versionExists(version)) {
+            throw new IllegalStateException("Version already exists: " + version);
+        }
+        release.setVersion(version);
+        gitState.writeVersion(release);
+        appendEvent("create", version, null, null);
+        deployToDev(version);
         return gitState.readVersion(version);
     }
 
