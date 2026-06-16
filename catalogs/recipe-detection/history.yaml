@@ -5,3 +5,8 @@
   action: deploy
   version: 2.1.1
   env: dev
+- timestamp: '2026-06-16T09:50:32.901879887Z'
+  action: promote
+  version: 2.1.1
+  env: qa
+  fromVersion: dev
