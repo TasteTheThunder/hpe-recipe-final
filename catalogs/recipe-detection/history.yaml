@@ -30,3 +30,8 @@
   version: 2.1.2
   env: qa
   fromVersion: dev
+- timestamp: '2026-06-17T07:20:44.744094545Z'
+  action: promote
+  version: 2.1.2
+  env: integration
+  fromVersion: qa
