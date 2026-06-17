@@ -1,0 +1,101 @@
+recipeData:
+  chartVersion: 2.1.3
+  catalog_name: HPE Analytics Runtime
+  catalog_description: Enterprise analytics and real-time data processing platform
+    for large-scale workloads.
+  release_date: '2026-06-12'
+  catalog_status: GA
+  maintainer: HPE DevOps Team
+  recipes:
+  - version: 2.0.0
+    description: Initial GA release of Analytics Runtime.
+    release_date: '2026-06-12'
+    status: GA
+    release_notes: Introduces analytics engine, dashboard service, and PostgreSQL
+      integration.
+    components:
+      analytics-engine:
+        version: 1.0.2
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 1.0.1
+        upgrade_to:
+        - 1.0.3
+      dashboard-service:
+        version: 2.0.2
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 2.0.1
+        upgrade_to:
+        - 2.0.3
+      postgresql:
+        version: 3.0.2
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 3.0.1
+        upgrade_to:
+        - 3.0.3
+    upgrade_to:
+    - 2.0.1
+  - version: 2.0.1
+    description: Performance and security enhancement release.
+    release_date: '2026-06-13'
+    status: GA
+    release_notes: Improved query execution, enhanced dashboard rendering, and PostgreSQL
+      patch update.
+    components:
+      analytics-engine:
+        version: 1.0.3
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 1.0.2
+        upgrade_to:
+        - 1.0.4
+      dashboard-service:
+        version: 2.0.3
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 2.0.2
+        upgrade_to:
+        - 2.0.4
+      postgresql:
+        version: 3.0.3
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 3.0.2
+        upgrade_to:
+        - 3.0.4
+    upgrade_to:
+    - 2.0.2
+    upgrade_from:
+    - 2.0.0
+  - version: 2.0.2
+    description: Performance and security enhancement release.
+    release_date: '2026-06-15'
+    status: GA
+    release_notes: Improved query execution, enhanced dashboard rendering, and PostgreSQL
+      patch update.
+    components:
+      analytics-engine:
+        version: 1.0.4
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 1.0.3
+        upgrade_to:
+        - 1.0.5
+      dashboard-service:
+        version: 2.0.4
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 2.0.3
+        upgrade_to:
+        - 2.0.5
+      postgresql:
+        version: 3.0.4
+        release_date: '2026-06-12'
+        upgrade_from:
+        - 3.0.3
+        upgrade_to:
+        - 3.0.5
+    upgrade_from:
+    - 2.0.1
