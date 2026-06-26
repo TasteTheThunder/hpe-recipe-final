@@ -59,3 +59,8 @@
   action: deploy
   version: 2.1.2
   env: integration
+- timestamp: '2026-06-26T08:49:36.990985239Z'
+  action: rollback
+  version: 2.1.1
+  env: integration
+  fromVersion: 2.1.2
