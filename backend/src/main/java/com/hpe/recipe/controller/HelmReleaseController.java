@@ -140,12 +140,19 @@ public class HelmReleaseController {
             return ResponseEntity.badRequest().build();
         }
 
-        // Deploy status is transient UI state; the deployed version per env is the Git source of
-        // truth (set at deploy time), so the Jenkins callback only drives live status badges.
+        if ("deployed".equalsIgnoreCase(status)) {
+            String eventAction = firstNonBlank(body.get("eventAction"), body.get("action"));
+            platform.completeDeployment(version, cluster, eventAction, body.get("fromVersion"));
+        }
+
         wsHandler.broadcast("status_changed",
                 Map.of("version", version, "status", status, "cluster", cluster));
 
         return ResponseEntity.ok(Map.of("version", version, "status", status, "cluster", cluster));
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return first != null && !first.isBlank() ? first : second;
     }
 
   
@@ -156,8 +163,8 @@ public class HelmReleaseController {
 
         try {
             // Git is the source of truth: route the legacy deploy to the Git-backed platform,
-            // which records env state + history and triggers Jenkins (deploy to the first stage,
-            // or promote one stage forward).
+            // which triggers Jenkins now and records env state/history only after Jenkins reports
+            // a successful Helm deploy.
             String first = platform.pipeline().get(0);
             if (cluster.equals(first)) {
                 platform.deployToDev(version);
@@ -169,7 +176,7 @@ public class HelmReleaseController {
                     Map.of("version", version, "status", "deploying", "cluster", cluster));
 
             return ResponseEntity.ok(Map.of(
-                    "message", "Pushed to Git. Jenkins will deploy shortly.",
+                    "message", "Deployment triggered. Git environment state will update after Jenkins succeeds.",
                     "version", version,
                     "cluster", cluster
             ));

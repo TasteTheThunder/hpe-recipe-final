@@ -7,6 +7,8 @@ pipeline {
         choice(name: 'ACTION', choices: ['deploy', 'uninstall'], description: 'deploy = install/upgrade, uninstall = helm uninstall')
         string(name: 'CHART_VERSION', defaultValue: '', description: 'Optional chart version override')
         string(name: 'VALUES_FILE', defaultValue: '', description: 'Optional values file name override (e.g. prod-values.yaml)')
+        string(name: 'DEPLOY_EVENT_ACTION', defaultValue: '', description: 'Backend history action finalized after successful deploy')
+        string(name: 'FROM_VERSION', defaultValue: '', description: 'Previous/source version for backend history finalization')
     }
 
     environment {
@@ -198,11 +200,11 @@ pipeline {
                         sh """
                             curl -s -X PUT ${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER} \\
                             -H "Content-Type: application/json" \\
-                            -d '{"status":"deployed"}'
+                            -d '{"status":"deployed","eventAction":"${params.DEPLOY_EVENT_ACTION}","fromVersion":"${params.FROM_VERSION}"}'
                         """
                     } else {
                         bat """
-                            curl -s -X PUT "${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER}" -H "Content-Type: application/json" -d "{\\"status\\":\\"deployed\\"}"
+                            curl -s -X PUT "${API_URL}/helm-releases/${env.CHART_VERSION}/status?cluster=${params.CLUSTER}" -H "Content-Type: application/json" -d "{\\"status\\":\\"deployed\\",\\"eventAction\\":\\"${params.DEPLOY_EVENT_ACTION}\\",\\"fromVersion\\":\\"${params.FROM_VERSION}\\"}"
                         """
                     }
                 }

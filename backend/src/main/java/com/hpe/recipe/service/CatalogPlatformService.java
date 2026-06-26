@@ -168,8 +168,7 @@ public class CatalogPlatformService {
         }
         release.setVersion(version);
         gitState.writeVersion(release);
-        appendEvent("create", version, null, null);
-        deployToDev(version);
+        renderAndTrigger(version, dev, "create_deploy", null);
         return gitState.readVersion(version);
     }
 
@@ -177,10 +176,7 @@ public class CatalogPlatformService {
     public void deployToDev(String version) {
         String v = requireExistingVersion(version);
         String dev = pipeline().get(0);
-        gitState.setEnvironmentVersion(dev, v);
-        gitState.appendEnvironmentHistory(dev, v);
-        appendEvent("deploy", v, dev, null);
-        renderAndTrigger(v, dev);
+        renderAndTrigger(v, dev, "deploy", null);
     }
 
     /** Promote a version forward to the immediately next stage (rejects skips). */
@@ -201,14 +197,11 @@ public class CatalogPlatformService {
                     + " before promoting to " + toEnv.toUpperCase()
                     + " (pipeline: " + String.join(" → ", pipeline) + ")");
         }
-        gitState.setEnvironmentVersion(toEnv, v);
-        gitState.appendEnvironmentHistory(toEnv, v);
-        appendEvent("promote", v, toEnv, prev);
-        renderAndTrigger(v, toEnv);
+        renderAndTrigger(v, toEnv, "promote", prev);
     }
 
     /** Roll an environment back one step to the previous version it held, and redeploy it. */
-    public void rollback(String env) {
+    public String rollback(String env) {
         List<String> pipeline = pipeline();
         if (!pipeline.contains(env)) {
             throw new IllegalStateException("Unknown environment: " + env);
@@ -220,10 +213,8 @@ public class CatalogPlatformService {
         String current = hist.get(hist.size() - 1);
         String previous = hist.get(hist.size() - 2);
 
-        gitState.setEnvironmentVersion(env, previous);
-        gitState.setEnvironmentHistory(env, new ArrayList<>(hist.subList(0, hist.size() - 1)));
-        appendEvent("rollback", previous, env, current);
-        renderAndTrigger(previous, env);
+        renderAndTrigger(previous, env, "rollback", current);
+        return previous;
     }
 
     /**
@@ -246,11 +237,46 @@ public class CatalogPlatformService {
         String newVersion = nextPatchVersion(currentDev, new HashSet<>(versions()));
         edited.setVersion(newVersion);
         gitState.writeVersion(edited);
-        gitState.setEnvironmentVersion(dev, newVersion);
-        gitState.appendEnvironmentHistory(dev, newVersion);
-        appendEvent("edit", newVersion, dev, currentDev);
-        renderAndTrigger(newVersion, dev);
+        renderAndTrigger(newVersion, dev, "edit", currentDev);
         return gitState.readVersion(newVersion);
+    }
+
+    /** Finalize environment source-of-truth after Jenkins confirms the Helm deploy succeeded. */
+    public void completeDeployment(String version, String env, String action, String fromVersion) {
+        String v = requireExistingVersion(version);
+        if (!pipeline().contains(env)) {
+            throw new IllegalStateException("Unknown environment: " + env);
+        }
+        String eventAction = action == null || action.isBlank() ? "deploy" : action;
+        switch (eventAction) {
+            case "create_deploy" -> {
+                gitState.setEnvironmentVersion(env, v);
+                appendEnvironmentHistoryIfChanged(env, v);
+                appendEvent("create", v, null, null);
+                appendEvent("deploy", v, env, null);
+            }
+            case "deploy" -> {
+                gitState.setEnvironmentVersion(env, v);
+                appendEnvironmentHistoryIfChanged(env, v);
+                appendEvent("deploy", v, env, null);
+            }
+            case "promote" -> {
+                gitState.setEnvironmentVersion(env, v);
+                appendEnvironmentHistoryIfChanged(env, v);
+                appendEvent("promote", v, env, fromVersion);
+            }
+            case "edit" -> {
+                gitState.setEnvironmentVersion(env, v);
+                appendEnvironmentHistoryIfChanged(env, v);
+                appendEvent("edit", v, env, fromVersion);
+            }
+            case "rollback" -> {
+                gitState.setEnvironmentVersion(env, v);
+                finalizeRollbackHistory(env, v, fromVersion);
+                appendEvent("rollback", v, env, fromVersion);
+            }
+            default -> throw new IllegalStateException("Unknown deployment completion action: " + eventAction);
+        }
     }
 
     /**
@@ -321,7 +347,7 @@ public class CatalogPlatformService {
      * Jenkins. Reuses GitOpsService.generateAndPush so the values-v&lt;version&gt;.yaml the
      * Jenkinsfile reads is (re)written for this env — this is what makes rollback a real redeploy.
      */
-    private void renderAndTrigger(String version, String env) {
+    private void renderAndTrigger(String version, String env, String deployEventAction, String fromVersion) {
         HelmRelease release = gitState.readVersion(version);
         if (release == null) {
             throw new IllegalStateException("Version not found in Git: " + version);
@@ -332,10 +358,27 @@ public class CatalogPlatformService {
         try {
             String valuesFile = gitOps.resolveValuesFileName(release);
             gitOps.generateAndPush(release);
-            jenkins.trigger(env, "deploy", release.getVersion(), valuesFile);
+            jenkins.trigger(env, "deploy", release.getVersion(), valuesFile, deployEventAction, fromVersion);
         } catch (Exception e) {
             throw new RuntimeException("Failed to deploy " + version + " to " + env + ": " + e.getMessage(), e);
         }
+    }
+
+    private void appendEnvironmentHistoryIfChanged(String env, String version) {
+        List<String> hist = gitState.readEnvironmentHistory(env);
+        if (hist.isEmpty() || !version.equals(hist.get(hist.size() - 1))) {
+            gitState.appendEnvironmentHistory(env, version);
+        }
+    }
+
+    private void finalizeRollbackHistory(String env, String version, String fromVersion) {
+        List<String> hist = gitState.readEnvironmentHistory(env);
+        if (hist.size() >= 2 && version.equals(hist.get(hist.size() - 2))
+                && (fromVersion == null || fromVersion.isBlank() || fromVersion.equals(hist.get(hist.size() - 1)))) {
+            gitState.setEnvironmentHistory(env, new ArrayList<>(hist.subList(0, hist.size() - 1)));
+            return;
+        }
+        appendEnvironmentHistoryIfChanged(env, version);
     }
 
     private void appendEvent(String action, String version, String env, String fromVersion) {

@@ -47,6 +47,12 @@ public class JenkinsService {
 
     /** Trigger the Jenkins deploy job for {@code cluster} at {@code chartVersion}. */
     public void trigger(String cluster, String action, String chartVersion, String valuesFile) {
+        trigger(cluster, action, chartVersion, valuesFile, "", "");
+    }
+
+    /** Trigger Jenkins with metadata the success callback uses to finalize Git environment state. */
+    public void trigger(String cluster, String action, String chartVersion, String valuesFile,
+                        String deployEventAction, String fromVersion) {
         if (!StringUtils.hasText(jenkinsUser) || !StringUtils.hasText(jenkinsToken)) {
             throw new IllegalStateException("Jenkins credentials are not configured (JENKINS_USER/JENKINS_TOKEN)");
         }
@@ -81,6 +87,12 @@ public class JenkinsService {
             }
             if (StringUtils.hasText(valuesFile)) {
                 urlBuilder.queryParam("VALUES_FILE", valuesFile);
+            }
+            if (StringUtils.hasText(deployEventAction)) {
+                urlBuilder.queryParam("DEPLOY_EVENT_ACTION", deployEventAction);
+            }
+            if (StringUtils.hasText(fromVersion)) {
+                urlBuilder.queryParam("FROM_VERSION", fromVersion);
             }
 
             String url = urlBuilder.toUriString();

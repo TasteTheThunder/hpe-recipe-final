@@ -119,10 +119,9 @@ public class PlatformController {
     @PostMapping("/environments/{env}/rollback")
     public ResponseEntity<?> rollback(@PathVariable String env) {
         return execute(() -> {
-            platform.rollback(env);
-            String now = platform.environments().get(env);
-            broadcastDeploying(now, env);
-            return Map.of("message", "Rolling back " + env, "version", now == null ? "" : now, "env", env);
+            String targetVersion = platform.rollback(env);
+            broadcastDeploying(targetVersion, env);
+            return Map.of("message", "Rolling back " + env, "version", targetVersion, "env", env);
         });
     }
 

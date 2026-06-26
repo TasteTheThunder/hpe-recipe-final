@@ -73,6 +73,7 @@ class CatalogPlatformServiceTest {
         gs.writeVersion(sampleRelease("0.15")); // historical/catalog version exists, but DEV is empty
 
         HelmRelease created = svc.createAndDeployToDev(sampleRelease("0.16"));
+        svc.completeDeployment("0.16", "dev", "create_deploy", null);
 
         assertThat(created.getVersion()).isEqualTo("0.16");
         assertThat(svc.environments()).containsEntry("dev", "0.16");
@@ -85,7 +86,7 @@ class CatalogPlatformServiceTest {
     void createAndDeployToDevRequiresEmptyDevAndNewVersion() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
+        deploySucceeded(svc, "0.16");
 
         assertThatThrownBy(() -> svc.createAndDeployToDev(sampleRelease("0.17")))
                 .isInstanceOf(IllegalStateException.class)
@@ -104,34 +105,39 @@ class CatalogPlatformServiceTest {
     }
 
     @Test
-    void deployToDevWritesGitStateAndTriggersJenkins() {
+    void deployToDevWritesGitStateOnlyAfterJenkinsSuccess() {
         RecordingJenkins jenkins = new RecordingJenkins();
         CatalogPlatformService svc = newPlatform(jenkins);
         svc.createVersion(sampleRelease("0.16"));
 
         svc.deployToDev("v0.16"); // leading v is tolerated and normalized
 
-        assertThat(svc.environments()).containsEntry("dev", "0.16");
+        assertThat(svc.environments()).doesNotContainKey("dev");
         assertThat(jenkins.triggers).contains("dev@0.16");
-        assertThat(svc.history()).extracting(e -> e.get("action")).contains("create", "deploy");
+        assertThat(svc.history()).extracting(e -> e.get("action")).contains("create").doesNotContain("deploy");
+
+        svc.completeDeployment("0.16", "dev", "deploy", null);
+
+        assertThat(svc.environments()).containsEntry("dev", "0.16");
+        assertThat(svc.history()).extracting(e -> e.get("action")).contains("deploy");
     }
 
     @Test
     void promoteIsSequentialAndRejectsSkips() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
+        deploySucceeded(svc, "0.16");
 
         // dev -> integration skips qa: rejected, naming the required previous stage.
         assertThatThrownBy(() -> svc.promote("0.16", "integration"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("QA");
 
-        svc.promote("0.16", "qa");
+        promoteSucceeded(svc, "0.16", "qa", "dev");
         assertThat(svc.environments()).containsEntry("qa", "0.16");
 
         // now the next stage is allowed
-        svc.promote("0.16", "integration");
+        promoteSucceeded(svc, "0.16", "integration", "qa");
         assertThat(svc.environments()).containsEntry("integration", "0.16");
     }
 
@@ -140,16 +146,17 @@ class CatalogPlatformServiceTest {
         RecordingJenkins jenkins = new RecordingJenkins();
         CatalogPlatformService svc = newPlatform(jenkins);
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
-        svc.promote("0.16", "qa");
+        deploySucceeded(svc, "0.16");
+        promoteSucceeded(svc, "0.16", "qa", "dev");
 
         // fork 0.17 on dev and promote to qa -> qa history [0.16, 0.17]
-        svc.editDev(sampleRelease("ignored"));
-        svc.promote("0.17", "qa");
+        editSucceeded(svc, sampleRelease("ignored"));
+        promoteSucceeded(svc, "0.17", "qa", "dev");
         assertThat(svc.environments()).containsEntry("qa", "0.17");
 
         // one step back: qa returns to 0.16 and is redeployed
         svc.rollback("qa");
+        svc.completeDeployment("0.16", "qa", "rollback", "0.17");
         assertThat(svc.environments()).containsEntry("qa", "0.16");
         assertThat(jenkins.triggers).contains("qa@0.16");
 
@@ -160,6 +167,7 @@ class CatalogPlatformServiceTest {
         Map<?, ?> rollbackOptions = (Map<?, ?>) svc.promotionOptions("0.17").get("canRollback");
         assertThat(rollbackOptions.get("dev")).isEqualTo(true);
         svc.rollback("dev");
+        svc.completeDeployment("0.16", "dev", "rollback", "0.17");
         assertThat(svc.environments()).containsEntry("dev", "0.16");
         assertThat(jenkins.triggers).contains("dev@0.16");
     }
@@ -168,10 +176,10 @@ class CatalogPlatformServiceTest {
     void editDevForksNewVersionLeavingPromotedImmutable() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
-        svc.promote("0.16", "qa");
+        deploySucceeded(svc, "0.16");
+        promoteSucceeded(svc, "0.16", "qa", "dev");
 
-        HelmRelease forked = svc.editDev(sampleRelease("ignored"));
+        HelmRelease forked = editSucceeded(svc, sampleRelease("ignored"));
 
         assertThat(forked.getVersion()).isEqualTo("0.17");
         assertThat(svc.environments()).containsEntry("dev", "0.17").containsEntry("qa", "0.16");
@@ -186,29 +194,29 @@ class CatalogPlatformServiceTest {
 
         // 1. Create 0.0.1 and deploy it to DEV.
         svc.createVersion(sampleRelease("0.0.1"));
-        svc.deployToDev("0.0.1");
+        deploySucceeded(svc, "0.0.1");
 
         // 2-3. Iterate in DEV (bug fixes): 0.0.1 -> 0.0.2 -> 0.0.3 -> 0.0.4 -> 0.0.5. None of these
         // edits may move a version to QA/INTEGRATION/PROD — only DEV ever holds a version.
-        svc.editDev(sampleRelease("ignored")); // 0.0.2
-        svc.editDev(sampleRelease("ignored")); // 0.0.3
-        svc.editDev(sampleRelease("ignored")); // 0.0.4
-        svc.editDev(sampleRelease("ignored")); // 0.0.5
+        editSucceeded(svc, sampleRelease("ignored")); // 0.0.2
+        editSucceeded(svc, sampleRelease("ignored")); // 0.0.3
+        editSucceeded(svc, sampleRelease("ignored")); // 0.0.4
+        editSucceeded(svc, sampleRelease("ignored")); // 0.0.5
         assertThat(svc.environments()).containsEntry("dev", "0.0.5").hasSize(1);
 
         // 4. After DEV qualification, MANUALLY promote 0.0.5 to QA.
-        svc.promote("0.0.5", "qa");
+        promoteSucceeded(svc, "0.0.5", "qa", "dev");
         assertThat(svc.environments()).containsEntry("dev", "0.0.5").containsEntry("qa", "0.0.5");
 
         // 5. QA finds a bug -> edit creates 0.0.6 and deploys to DEV ONLY; QA still runs 0.0.5
         // (no automatic promotion just because a new version was created).
-        svc.editDev(sampleRelease("ignored")); // 0.0.6 onto DEV
+        editSucceeded(svc, sampleRelease("ignored")); // 0.0.6 onto DEV
         assertThat(svc.environments())
                 .containsEntry("dev", "0.0.6")
                 .containsEntry("qa", "0.0.5");
 
         // After DEV testing passes, MANUALLY promote 0.0.6 to QA -> it replaces 0.0.5.
-        svc.promote("0.0.6", "qa");
+        promoteSucceeded(svc, "0.0.6", "qa", "dev");
         assertThat(svc.environments())
                 .containsEntry("dev", "0.0.6")
                 .containsEntry("qa", "0.0.6");
@@ -226,9 +234,9 @@ class CatalogPlatformServiceTest {
     void nextTargetAdvancesForwardFromFurthestStage() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
-        svc.promote("0.16", "qa");
-        svc.editDev(sampleRelease("ignored")); // forks 0.17 onto dev -> dev=0.17, qa=0.16
+        deploySucceeded(svc, "0.16");
+        promoteSucceeded(svc, "0.16", "qa", "dev");
+        editSucceeded(svc, sampleRelease("ignored")); // forks 0.17 onto dev -> dev=0.17, qa=0.16
 
         assertThat(svc.promotionOptions("0.16")).containsEntry("nextTarget", "integration");
         assertThat(svc.promotionOptions("0.17")).containsEntry("nextTarget", "qa");
@@ -256,12 +264,12 @@ class CatalogPlatformServiceTest {
     void multipleVersionsPromoteForwardIndependently() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
-        svc.promote("0.16", "qa");
-        svc.editDev(sampleRelease("ignored")); // dev=0.17, qa=0.16
+        deploySucceeded(svc, "0.16");
+        promoteSucceeded(svc, "0.16", "qa", "dev");
+        editSucceeded(svc, sampleRelease("ignored")); // dev=0.17, qa=0.16
 
-        svc.promote("0.16", "integration"); // older version races ahead: qa -> integration
-        svc.promote("0.17", "qa");           // newer version trails: dev -> qa, replacing 0.16
+        promoteSucceeded(svc, "0.16", "integration", "qa"); // older version races ahead: qa -> integration
+        promoteSucceeded(svc, "0.17", "qa", "dev");         // newer version trails: dev -> qa, replacing 0.16
 
         assertThat(svc.environments())
                 .containsEntry("integration", "0.16")
@@ -278,8 +286,8 @@ class CatalogPlatformServiceTest {
         RecordingJenkins jenkins = new RecordingJenkins();
         CatalogPlatformService svc = newPlatform(jenkins);
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
-        svc.promote("0.16", "qa"); // 0.16 live in dev AND qa
+        deploySucceeded(svc, "0.16");
+        promoteSucceeded(svc, "0.16", "qa", "dev"); // 0.16 live in dev AND qa
 
         svc.deleteVersion("0.16");
 
@@ -311,7 +319,7 @@ class CatalogPlatformServiceTest {
     void deletingLastVersionReturnsToEmptyState() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
+        deploySucceeded(svc, "0.16");
 
         svc.deleteVersion("0.16");
 
@@ -340,7 +348,7 @@ class CatalogPlatformServiceTest {
     void clearHistoryClearsOnlyDeploymentEventLog() {
         CatalogPlatformService svc = newPlatform(new RecordingJenkins());
         svc.createVersion(sampleRelease("0.16"));
-        svc.deployToDev("0.16");
+        deploySucceeded(svc, "0.16");
 
         assertThat(svc.history()).isNotEmpty();
         svc.clearHistory();
@@ -358,6 +366,23 @@ class CatalogPlatformServiceTest {
         GitStateService gitState = new GitStateService(
                 remoteUri, tmp.resolve("state-clone").toString(), "main", "user", "");
         return new CatalogPlatformService(gitState, new NoopGitOps(), jenkins, new PromotionProperties());
+    }
+
+    private void deploySucceeded(CatalogPlatformService svc, String version) {
+        svc.deployToDev(version);
+        svc.completeDeployment(version, "dev", "deploy", null);
+    }
+
+    private void promoteSucceeded(CatalogPlatformService svc, String version, String env, String fromEnv) {
+        svc.promote(version, env);
+        svc.completeDeployment(version, env, "promote", fromEnv);
+    }
+
+    private HelmRelease editSucceeded(CatalogPlatformService svc, HelmRelease edited) {
+        String currentDev = svc.environments().get("dev");
+        HelmRelease forked = svc.editDev(edited);
+        svc.completeDeployment(forked.getVersion(), "dev", "edit", currentDev);
+        return forked;
     }
 
     private HelmRelease sampleRelease(String version) {
@@ -382,6 +407,7 @@ class CatalogPlatformServiceTest {
     static final class RecordingJenkins extends JenkinsService {
         final List<String> triggers = new ArrayList<>();
         final List<String> actions = new ArrayList<>();
+        final List<String> deployEvents = new ArrayList<>();
 
         RecordingJenkins() {
             super("user", "token", "http://localhost:8080", "job");
@@ -389,8 +415,18 @@ class CatalogPlatformServiceTest {
 
         @Override
         public void trigger(String cluster, String action, String chartVersion, String valuesFile) {
+            trigger(cluster, action, chartVersion, valuesFile, "", "");
+        }
+
+        @Override
+        public void trigger(String cluster, String action, String chartVersion, String valuesFile,
+                            String deployEventAction, String fromVersion) {
             triggers.add(cluster + "@" + chartVersion);
             actions.add(action + ":" + cluster + ":" + chartVersion);
+            if (deployEventAction != null && !deployEventAction.isBlank()) {
+                deployEvents.add(deployEventAction + ":" + cluster + ":" + chartVersion + ":"
+                        + (fromVersion == null ? "" : fromVersion));
+            }
         }
     }
 
