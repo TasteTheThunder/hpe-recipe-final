@@ -64,3 +64,8 @@
   version: 2.1.1
   env: integration
   fromVersion: 2.1.2
+- timestamp: '2026-06-26T08:54:50.844060162Z'
+  action: promote
+  version: 2.1.2
+  env: integration
+  fromVersion: qa
