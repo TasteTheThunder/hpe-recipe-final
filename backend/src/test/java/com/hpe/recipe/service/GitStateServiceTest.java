@@ -98,13 +98,13 @@ class GitStateServiceTest {
     }
 
     @Test
-    void environmentHistoryAppendsAndSupportsOneStepRollback() {
+    void environmentHistoryAppendsAndCanBeOverwrittenForMaintenance() {
         GitStateService svc = newService("clone-a");
         svc.appendEnvironmentHistory("qa", "v0.16");
         svc.appendEnvironmentHistory("qa", "v0.17");
         assertThat(svc.readEnvironmentHistory("qa")).containsExactly("v0.16", "v0.17");
 
-        // One-step rollback: pop the current so the previous becomes current.
+        // Low-level overwrite remains available for maintenance/admin cleanup paths.
         List<String> hist = new ArrayList<>(svc.readEnvironmentHistory("qa"));
         hist.remove(hist.size() - 1);
         svc.setEnvironmentHistory("qa", hist);

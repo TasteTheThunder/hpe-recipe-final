@@ -251,28 +251,28 @@ public class CatalogPlatformService {
         switch (eventAction) {
             case "create_deploy" -> {
                 gitState.setEnvironmentVersion(env, v);
-                appendEnvironmentHistoryIfChanged(env, v);
+                appendEnvironmentHistory(env, v);
                 appendEvent("create", v, null, null);
                 appendEvent("deploy", v, env, null);
             }
             case "deploy" -> {
                 gitState.setEnvironmentVersion(env, v);
-                appendEnvironmentHistoryIfChanged(env, v);
+                appendEnvironmentHistory(env, v);
                 appendEvent("deploy", v, env, null);
             }
             case "promote" -> {
                 gitState.setEnvironmentVersion(env, v);
-                appendEnvironmentHistoryIfChanged(env, v);
+                appendEnvironmentHistory(env, v);
                 appendEvent("promote", v, env, fromVersion);
             }
             case "edit" -> {
                 gitState.setEnvironmentVersion(env, v);
-                appendEnvironmentHistoryIfChanged(env, v);
+                appendEnvironmentHistory(env, v);
                 appendEvent("edit", v, env, fromVersion);
             }
             case "rollback" -> {
                 gitState.setEnvironmentVersion(env, v);
-                finalizeRollbackHistory(env, v, fromVersion);
+                appendEnvironmentHistory(env, v);
                 appendEvent("rollback", v, env, fromVersion);
             }
             default -> throw new IllegalStateException("Unknown deployment completion action: " + eventAction);
@@ -282,9 +282,10 @@ public class CatalogPlatformService {
     /**
      * Delete a catalog version coherently with Git AND the cluster: helm-uninstall it from EVERY
      * environment currently running it (a version can be live in several at once), clear those env
-     * pointers, scrub the version from every environment history (so rollback can't target it),
-     * remove the version definition file, and log the events. Idempotent: deleting an unknown
-     * version is a no-op. After deleting the last version the system is empty again.
+     * pointers, remove the version definition file, and log the events. Environment history is a
+     * chronological record of successful deployments, so delete/uninstall does not rewrite it.
+     * Idempotent: deleting an unknown version is a no-op. After deleting the last version the system
+     * is empty again.
      */
     public void deleteVersion(String version) {
         String v = normalize(version);
@@ -303,7 +304,7 @@ public class CatalogPlatformService {
             return; // nothing to delete
         }
 
-        // 1. Uninstall from each environment running it, then clear its pointer + history.
+        // 1. Uninstall from each environment running it, then clear its current pointer.
         for (String env : affected) {
             try {
                 jenkins.trigger(env, "uninstall", v, null);
@@ -312,28 +313,10 @@ public class CatalogPlatformService {
                         + ": " + e.getMessage(), e);
             }
             gitState.deleteEnvironment(env);
-            gitState.setEnvironmentHistory(env, new ArrayList<>()); // env is now empty
             appendEvent("uninstall", v, env, null);
         }
 
-        // 2. Scrub the version from any other environment's history (rollback can't point at it).
-        for (String env : pipeline()) {
-            if (affected.contains(env)) {
-                continue;
-            }
-            List<String> hist = gitState.readEnvironmentHistory(env);
-            if (hist.contains(v)) {
-                List<String> trimmed = new ArrayList<>();
-                for (String h : hist) {
-                    if (!v.equals(h)) {
-                        trimmed.add(h);
-                    }
-                }
-                gitState.setEnvironmentHistory(env, trimmed);
-            }
-        }
-
-        // 3. Remove the version definition file, then record the delete.
+        // 2. Remove the version definition file, then record the delete.
         if (versionFileExists) {
             gitState.deleteVersion(v);
         }
@@ -364,21 +347,8 @@ public class CatalogPlatformService {
         }
     }
 
-    private void appendEnvironmentHistoryIfChanged(String env, String version) {
-        List<String> hist = gitState.readEnvironmentHistory(env);
-        if (hist.isEmpty() || !version.equals(hist.get(hist.size() - 1))) {
-            gitState.appendEnvironmentHistory(env, version);
-        }
-    }
-
-    private void finalizeRollbackHistory(String env, String version, String fromVersion) {
-        List<String> hist = gitState.readEnvironmentHistory(env);
-        if (hist.size() >= 2 && version.equals(hist.get(hist.size() - 2))
-                && (fromVersion == null || fromVersion.isBlank() || fromVersion.equals(hist.get(hist.size() - 1)))) {
-            gitState.setEnvironmentHistory(env, new ArrayList<>(hist.subList(0, hist.size() - 1)));
-            return;
-        }
-        appendEnvironmentHistoryIfChanged(env, version);
+    private void appendEnvironmentHistory(String env, String version) {
+        gitState.appendEnvironmentHistory(env, version);
     }
 
     private void appendEvent(String action, String version, String env, String fromVersion) {

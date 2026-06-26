@@ -154,14 +154,21 @@ class CatalogPlatformServiceTest {
         promoteSucceeded(svc, "0.17", "qa", "dev");
         assertThat(svc.environments()).containsEntry("qa", "0.17");
 
-        // one step back: qa returns to 0.16 and is redeployed
+        // one step back: qa returns to 0.16 and the successful rollback is appended.
         svc.rollback("qa");
         svc.completeDeployment("0.16", "qa", "rollback", "0.17");
         assertThat(svc.environments()).containsEntry("qa", "0.16");
         assertThat(jenkins.triggers).contains("qa@0.16");
+        GitStateService afterRollback = new GitStateService(
+                remoteUri, tmp.resolve("verify-rollback-clone").toString(), "main", "user", "");
+        assertThat(afterRollback.readEnvironmentHistory("qa")).containsExactly("0.16", "0.17", "0.16");
 
-        // no previous left -> disabled
-        assertThatThrownBy(() -> svc.rollback("qa")).isInstanceOf(IllegalStateException.class);
+        // Promoting the same version forward again appends another successful deployment entry.
+        promoteSucceeded(svc, "0.17", "qa", "dev");
+        assertThat(svc.environments()).containsEntry("qa", "0.17");
+        GitStateService afterRepromote = new GitStateService(
+                remoteUri, tmp.resolve("verify-repromote-clone").toString(), "main", "user", "");
+        assertThat(afterRepromote.readEnvironmentHistory("qa")).containsExactly("0.16", "0.17", "0.16", "0.17");
 
         // dev history is also rollback-capable after an edit.
         Map<?, ?> rollbackOptions = (Map<?, ?>) svc.promotionOptions("0.17").get("canRollback");
@@ -282,7 +289,7 @@ class CatalogPlatformServiceTest {
     }
 
     @Test
-    void deleteVersionUninstallsClearsPointersAndRemovesFile() {
+    void deleteVersionUninstallsClearsPointersKeepsDeploymentHistoryAndRemovesFile() {
         RecordingJenkins jenkins = new RecordingJenkins();
         CatalogPlatformService svc = newPlatform(jenkins);
         svc.createVersion(sampleRelease("0.16"));
@@ -295,6 +302,10 @@ class CatalogPlatformServiceTest {
         assertThat(svc.versions()).doesNotContain("0.16");
         assertThat(jenkins.actions).contains("uninstall:dev:0.16", "uninstall:qa:0.16");
         assertThat(svc.history()).extracting(e -> e.get("action")).contains("uninstall", "delete");
+        GitStateService fresh = new GitStateService(
+                remoteUri, tmp.resolve("verify-delete-history-clone").toString(), "main", "user", "");
+        assertThat(fresh.readEnvironmentHistory("dev")).containsExactly("0.16");
+        assertThat(fresh.readEnvironmentHistory("qa")).containsExactly("0.16");
     }
 
     @Test

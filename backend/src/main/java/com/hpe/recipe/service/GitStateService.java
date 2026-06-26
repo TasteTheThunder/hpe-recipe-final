@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
  * catalogs/recipe-detection/
  *   versions/v0.16.yaml          full catalog version (recipeData shape, cluster-agnostic)
  *   environments/dev.yaml        { catalogVersion: v0.16 }  -- single current version per env
- *   environment-history/qa.yaml  [v0.16, v0.17]             -- ordered, drives one-step rollback
+ *   environment-history/qa.yaml  [v0.16, v0.17, v0.16]      -- successful deploy timeline
  *   history.yaml                 [ {timestamp, action, version, env, actor, fromVersion?}, ... ]
  * </pre>
  *
@@ -220,7 +220,7 @@ public class GitStateService {
 
     // ===================== ENVIRONMENT HISTORY =====================
 
-    /** Ordered list of versions this environment has held (last = current). */
+    /** Ordered list of versions successfully deployed to this environment (last = latest success). */
     public List<String> readEnvironmentHistory(String env) {
         String e = validateId("environment", env);
         return read(repo -> loadStringList(new File(repo, ENV_HISTORY_DIR + "/" + e + ".yaml")));
@@ -257,7 +257,7 @@ public class GitStateService {
         });
     }
 
-    /** Overwrite the ordered history (used by rollback to pop the current version). */
+    /** Overwrite the ordered history for maintenance/admin cleanup paths. Deployments append only. */
     public void setEnvironmentHistory(String env, List<String> versions) {
         String e = validateId("environment", env);
         List<String> validated = new ArrayList<>();

@@ -197,7 +197,7 @@ public class HelmReleaseController {
             @PathVariable String version,
             @RequestParam(required = false) String cluster) {
         // Git-backed coherent delete: helm-uninstall from every env running this version,
-        // clear pointers/history, and remove the version file (cluster param kept for the
+        // clear current pointers, and remove the version file (cluster param kept for the
         // legacy route but ignored — delete is global). Same logic as DELETE /api/versions/{v}.
         try {
             platform.deleteVersion(version);
