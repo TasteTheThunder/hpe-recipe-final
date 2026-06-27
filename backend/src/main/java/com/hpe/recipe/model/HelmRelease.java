@@ -48,8 +48,6 @@ public class HelmRelease {
         this.recipes = recipes;
     }
 
-    // 🔹 GETTERS & SETTERS
-
     public String getVersion() { return version; }
     public void setVersion(String version) { this.version = version; }
 

@@ -27,12 +27,6 @@ public class ReleaseWebSocketHandler extends TextWebSocketHandler {
         sessions.remove(session);
     }
 
-    /**
-     * Broadcast an event to all connected clients.
-     * Events: release_created, release_updated, release_deleted,
-     *         recipe_added, recipe_updated, recipe_deleted,
-     *         status_changed
-     */
     public void broadcast(String event, Object data) {
         try {
             String json = objectMapper.writeValueAsString(Map.of(

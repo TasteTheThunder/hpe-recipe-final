@@ -6,13 +6,6 @@ import org.springframework.context.annotation.Configuration;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Promotion pipeline order, bound from {@code promotion.pipeline} in application.yml
- * (comma-separated, e.g. {@code dev,qa,integration,prod}).
- *
- * <p>This replaces the previously hardcoded order so the sequence lives in exactly one
- * place and the frontend can fetch it from {@code GET /api/pipeline}.
- */
 @Configuration
 @ConfigurationProperties(prefix = "promotion")
 public class PromotionProperties {

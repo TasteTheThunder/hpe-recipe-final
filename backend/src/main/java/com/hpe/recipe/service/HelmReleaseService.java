@@ -20,7 +20,6 @@ public class HelmReleaseService {
         this.gitState = gitState;
     }
 
-    // ================= PROMOTION PIPELINE =================
 
     public static String helmReleaseNameForCluster(String cluster) {
         return "recipe-" + cluster;
@@ -62,9 +61,6 @@ public class HelmReleaseService {
     }
 
     public Optional<String> getNextPromotionTarget(String version) {
-        // Forward-only: advance from the FURTHEST stage the version currently occupies. A version
-        // that has moved past dev must NOT be pulled back to dev; an undeployed version (or one
-        // already in the last stage) has no promotion target.
         int furthest = -1;
         for (int i = 0; i < promotionPipeline.size(); i++) {
             if (getDeployedFromCluster(promotionPipeline.get(i), version) != null) {
@@ -100,9 +96,6 @@ public class HelmReleaseService {
         return result;
     }
 
-    /**
-     * Resolves a version's content from Git for a deploy/preview target.
-     */
     public HelmRelease resolveReleaseForDeploy(String targetCluster, String version) {
         String v = RecipeDataMapper.normalizeVersion(version);
         HelmRelease release = v == null ? null : gitState.readVersion(v);
@@ -113,7 +106,6 @@ public class HelmReleaseService {
         return release;
     }
 
-    // ================= CRUD =================
 
     public List<HelmRelease> getAllHelmReleases(String cluster) {
         // All catalog versions are global in Git; mark the one currently live in this cluster.
@@ -169,7 +161,6 @@ public class HelmReleaseService {
         return getHelmRelease(cluster, v);
     }
 
-    // ================= RECIPE =================
 
     public List<Recipe> getRecipesByHelmVersion(String cluster, String version) {
         HelmRelease r = getHelmRelease(cluster, version);
@@ -248,7 +239,6 @@ public class HelmReleaseService {
                 .orElse(Collections.emptyList());
     }
 
-    // ================= COMPARE =================
 
     public Map<String, Object> getUpgradePathsBetweenHelmVersions(String cluster, String from, String to) {
 

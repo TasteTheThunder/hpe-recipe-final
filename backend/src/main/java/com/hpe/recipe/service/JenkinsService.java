@@ -15,15 +15,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.util.Base64;
 import java.util.Map;
 
-/**
- * Reusable Jenkins deploy trigger — extracted so deploy/promote/rollback can all reuse the
- * existing buildWithParameters + crumb/Basic-auth mechanism (CLUSTER/ACTION/ALLOW_DEPLOY/
- * CHART_VERSION/VALUES_FILE).
- *
- * NOTE: {@code HelmReleaseController} still has its own private copy of this for the legacy
- * deploy endpoint; that copy is removed when the legacy endpoint is repointed/removed at the
- * Git cutover (cleanup, to avoid touching the working deploy path in this slice).
- */
 @Service
 public class JenkinsService {
 
@@ -45,12 +36,10 @@ public class JenkinsService {
         this.jenkinsJob = jenkinsJob;
     }
 
-    /** Trigger the Jenkins deploy job for {@code cluster} at {@code chartVersion}. */
     public void trigger(String cluster, String action, String chartVersion, String valuesFile) {
         trigger(cluster, action, chartVersion, valuesFile, "", "");
     }
 
-    /** Trigger Jenkins with metadata the success callback uses to finalize Git environment state. */
     public void trigger(String cluster, String action, String chartVersion, String valuesFile,
                         String deployEventAction, String fromVersion) {
         if (!StringUtils.hasText(jenkinsUser) || !StringUtils.hasText(jenkinsToken)) {

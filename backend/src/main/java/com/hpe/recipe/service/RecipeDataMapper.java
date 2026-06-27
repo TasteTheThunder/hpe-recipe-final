@@ -9,28 +9,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Single, format-agnostic converter between {@link HelmRelease} and the {@code recipeData}
- * Map shape used across the catalog (Helm values files, ConfigMaps, and the Git version files).
- *
- * <p>Centralizing it here keeps the Git version-file reader/writer behaviourally identical to
- * the historical ConfigMap parser — same version normalization (strip a leading {@code v}),
- * same legacy {@code componentUpgradeRules}/{@code upgradePaths} handling — so the two readers
- * can never disagree about the same bytes.
- *
- * <p>NOTE: {@code GitOpsService.generateValuesYaml} and {@code HelmReleaseService.parseConfigMap}/
- * {@code buildRecipeJson} still carry their own copies of this logic. Routing them through this
- * mapper is folded into the write-phase cutover (cleanup #10); at that point this becomes the
- * only implementation. Until then, this is the canonical reader/writer for the Git path.
- */
 public final class RecipeDataMapper {
 
     private RecipeDataMapper() {
     }
 
-    // ---------- model -> recipeData map ----------
-
-    /** Build the cluster-agnostic recipeData map (no target_cluster/values_file — those are per-deploy). */
     public static Map<String, Object> toRecipeData(HelmRelease release) {
         Map<String, Object> recipeData = new LinkedHashMap<>();
         recipeData.put("chartVersion", release.getVersion());
@@ -83,7 +66,6 @@ public final class RecipeDataMapper {
         return recipeData;
     }
 
-    // ---------- recipeData map -> model ----------
 
     @SuppressWarnings("unchecked")
     public static HelmRelease fromRecipeData(Map<String, Object> recipeData, String fallbackVersion) {
@@ -173,7 +155,6 @@ public final class RecipeDataMapper {
             }
         }
 
-        // Legacy: derive upgrade_to from upgradePaths when no explicit upgrade_to was given.
         if (!hasExplicitUpgradeTo && !legacyFromByTarget.isEmpty()) {
             for (Map.Entry<String, List<String>> entry : legacyFromByTarget.entrySet()) {
                 String target = entry.getKey();
@@ -196,7 +177,6 @@ public final class RecipeDataMapper {
         return hr;
     }
 
-    // ---------- helpers ----------
 
     public static String normalizeVersion(String version) {
         if (version == null) {

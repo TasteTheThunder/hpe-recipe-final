@@ -14,19 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Git-backed catalog platform: orchestrates the write operations (create, deploy-to-dev,
- * promote, rollback, dev-fork-on-edit) and the derived reads, using {@link GitStateService}
- * as the source of truth, {@link GitOpsService} to render the per-deploy Helm values file
- * (with the destination env's target_cluster), and {@link JenkinsService} to trigger the deploy.
- *
- * <p>Version ids are normalized to the unprefixed form (e.g. "0.16") so the rendered
- * {@code values-v<version>.yaml} and the Jenkins {@code CHART_VERSION} stay consistent with the
- * Jenkinsfile. The frontend may display them with a leading "v".
- *
- * <p>Self-contained: it does not depend on the legacy {@code HelmReleaseService}/ConfigMap path,
- * which keeps working until the frontend cutover repoints reads to these endpoints.
- */
 @Service
 public class CatalogPlatformService {
 
@@ -44,8 +31,6 @@ public class CatalogPlatformService {
         this.jenkins = jenkins;
         this.promotionProperties = promotionProperties;
     }
-
-    // ===================== READS =====================
 
     public List<String> pipeline() {
         return promotionProperties.getPipeline();
@@ -95,10 +80,6 @@ public class CatalogPlatformService {
             canRollback.put(env, hist.size() >= 2);
         }
 
-        // Forward-only: a version advances from the FURTHEST stage it currently occupies, one
-        // stage at a time. It never moves back to an earlier stage it has already left, and an
-        // undeployed version has no promotion target (deploying it to the first stage is a
-        // separate deploy-to-dev action, not a promotion).
         int furthest = furthestStageIndex(v, envs, pipeline);
         String nextTarget = (furthest >= 0 && furthest < pipeline.size() - 1)
                 ? pipeline.get(furthest + 1)
@@ -120,7 +101,6 @@ public class CatalogPlatformService {
         return result;
     }
 
-    /** Highest pipeline index where {@code v} is the active version, or -1 if deployed nowhere. */
     private static int furthestStageIndex(String v, Map<String, String> envs, List<String> pipeline) {
         int furthest = -1;
         for (int i = 0; i < pipeline.size(); i++) {
@@ -131,9 +111,6 @@ public class CatalogPlatformService {
         return furthest;
     }
 
-    // ===================== WRITES =====================
-
-    /** Bootstrap a brand-new catalog version. Only allowed when no version exists anywhere. */
     public HelmRelease createVersion(HelmRelease release) {
         if (release == null) {
             throw new IllegalArgumentException("Release body is required");
@@ -217,14 +194,6 @@ public class CatalogPlatformService {
         return previous;
     }
 
-    /**
-     * DEV-only editing: forks a NEW version (auto patch bump) from the current dev catalog plus
-     * the supplied edited content, sets dev to it, and deploys to DEV only. Every edit creates a
-     * new version, so promoted versions are never mutated. The previous version is left untouched
-     * on whatever environments already run it and remains in version history — it is NOT
-     * auto-promoted. Moving a version to the next environment is always a manual action via
-     * {@link #promote}, after qualification/testing.
-     */
     public HelmRelease editDev(HelmRelease edited) {
         if (edited == null) {
             throw new IllegalArgumentException("Edited catalog body is required");
@@ -279,14 +248,6 @@ public class CatalogPlatformService {
         }
     }
 
-    /**
-     * Delete a catalog version coherently with Git AND the cluster: helm-uninstall it from EVERY
-     * environment currently running it (a version can be live in several at once), clear those env
-     * pointers, remove the version definition file, and log the events. Environment history is a
-     * chronological record of successful deployments, so delete/uninstall does not rewrite it.
-     * Idempotent: deleting an unknown version is a no-op. After deleting the last version the system
-     * is empty again.
-     */
     public void deleteVersion(String version) {
         String v = normalize(version);
         boolean versionFileExists = gitState.versionExists(v); // validateId guards traversal/blank
@@ -323,13 +284,6 @@ public class CatalogPlatformService {
         appendEvent("delete", v, null, null);
     }
 
-    // ===================== INTERNALS =====================
-
-    /**
-     * Render the chart values file for the destination env (target_cluster = env) and trigger
-     * Jenkins. Reuses GitOpsService.generateAndPush so the values-v&lt;version&gt;.yaml the
-     * Jenkinsfile reads is (re)written for this env — this is what makes rollback a real redeploy.
-     */
     private void renderAndTrigger(String version, String env, String deployEventAction, String fromVersion) {
         HelmRelease release = gitState.readVersion(version);
         if (release == null) {

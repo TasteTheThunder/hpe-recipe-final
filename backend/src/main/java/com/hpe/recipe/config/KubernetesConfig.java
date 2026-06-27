@@ -19,7 +19,7 @@ public class KubernetesConfig {
 
         properties.getClusters().forEach((name, cluster) -> {
 
-            // 🔥 Automatically reads ~/.kube/config
+            //Automatically reads ~/.kube/config
             Config config = Config.autoConfigure(cluster.getContext());
 
             KubernetesClient client = new KubernetesClientBuilder()

@@ -18,12 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
-/**
- * Git-backed catalog platform endpoints (context path /api): the source-of-truth surface for
- * pipeline order, per-environment state, versions, history, and the write operations
- * (create / deploy-to-dev / promote / rollback / dev-edit). Reads/writes delegate to
- * {@link CatalogPlatformService}; cluster-changing actions broadcast the existing WebSocket events.
- */
 @RestController
 @CrossOrigin(origins = "*")
 public class PlatformController {
@@ -35,8 +29,6 @@ public class PlatformController {
         this.platform = platform;
         this.wsHandler = wsHandler;
     }
-
-    // ===================== READS =====================
 
     @GetMapping("/pipeline")
     public List<String> pipeline() {
@@ -77,7 +69,6 @@ public class PlatformController {
         });
     }
 
-    // ===================== WRITES =====================
 
     @PostMapping("/versions")
     public ResponseEntity<?> create(@RequestBody HelmRelease release,

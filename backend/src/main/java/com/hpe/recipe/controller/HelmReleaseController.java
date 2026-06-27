@@ -162,9 +162,6 @@ public class HelmReleaseController {
             @RequestParam String cluster) {
 
         try {
-            // Git is the source of truth: route the legacy deploy to the Git-backed platform,
-            // which triggers Jenkins now and records env state/history only after Jenkins reports
-            // a successful Helm deploy.
             String first = platform.pipeline().get(0);
             if (cluster.equals(first)) {
                 platform.deployToDev(version);
@@ -196,9 +193,7 @@ public class HelmReleaseController {
     public ResponseEntity<?> deleteHelmRelease(
             @PathVariable String version,
             @RequestParam(required = false) String cluster) {
-        // Git-backed coherent delete: helm-uninstall from every env running this version,
-        // clear current pointers, and remove the version file (cluster param kept for the
-        // legacy route but ignored — delete is global). Same logic as DELETE /api/versions/{v}.
+
         try {
             platform.deleteVersion(version);
             wsHandler.broadcast("release_deleted", Map.of("version", version));

@@ -31,30 +31,6 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * Git-backed source of truth for catalog deployment state. Sits beside {@link GitOpsService}
- * and reuses the same JGit + credentials configuration (gitops.*), but maintains its own
- * working clone so it can read/write the platform-state layout without disturbing the
- * existing values-file generation.
- *
- * <pre>
- * catalogs/recipe-detection/
- *   versions/v0.16.yaml          full catalog version (recipeData shape, cluster-agnostic)
- *   environments/dev.yaml        { catalogVersion: v0.16 }  -- single current version per env
- *   environment-history/qa.yaml  [v0.16, v0.17, v0.16]      -- successful deploy timeline
- *   history.yaml                 [ {timestamp, action, version, env, actor, fromVersion?}, ... ]
- * </pre>
- *
- * Mutates always hard-sync the local clone to the remote branch first (so a write lands on top
- * of the latest state); reads hard-sync only when the cached clone is older than a short TTL
- * ({@code gitops.state-cache-ttl-seconds}), otherwise they are served from the local clone with
- * no network round-trip — this removes the per-read GitHub fetch that made the UI laggy. Git
- * stays authoritative either way: a fresh service (e.g. after a backend restart) has an empty
- * cache and syncs on its first read, and every mutate refreshes the window so this backend's own
- * writes are always visible immediately. Push-bearing work is serialized with {@link GitOpsService}
- * via {@link GitSupport#REMOTE_LOCK} and verified + retried so a concurrent push to the shared
- * branch can't silently drop a state write.
- */
 @Service
 public class GitStateService {
 
@@ -76,20 +52,11 @@ public class GitStateService {
     private final String username;
     private final String token;
 
-    /**
-     * How long a remote sync stays "fresh": within this window reads are served from the local
-     * clone with no GitHub fetch. A few seconds trades a small cross-process staleness for the
-     * elimination of a network round-trip on every read — changes made by THIS backend are always
-     * visible immediately because each mutate refreshes the window. Configurable via
-     * {@code gitops.state-cache-ttl-seconds}.
-     */
     private final long stateCacheTtlMillis;
-    /** Wall-clock millis of the last successful remote sync; 0 = never (first read always syncs). */
+
     private volatile long lastSyncedAtMillis = 0L;
-    /** Count of real remote syncs (fetch+reset) performed — observable by tests. */
     private final AtomicLong remoteSyncCount = new AtomicLong(0);
 
-    /** Spring wiring: cache TTL comes from {@code gitops.state-cache-ttl-seconds} (default 8s). */
     @Autowired
     public GitStateService(
             @Value("${gitops.repo-url}") String repoUrl,
@@ -112,9 +79,6 @@ public class GitStateService {
         this(repoUrl, localPath, branch, username, token, DEFAULT_STATE_CACHE_TTL_SECONDS);
     }
 
-    // ===================== VERSIONS =====================
-
-    /** All version ids (file name minus .yaml) under versions/, sorted. */
     public List<String> listVersions() {
         return read(repo -> {
             File dir = new File(repo, VERSIONS_DIR);
@@ -160,7 +124,6 @@ public class GitStateService {
         });
     }
 
-    // ===================== ENVIRONMENTS =====================
 
     /** Current catalog version for an environment, or null if the env has none. */
     public String readEnvironmentVersion(String env) {
@@ -226,12 +189,6 @@ public class GitStateService {
         return read(repo -> loadStringList(new File(repo, ENV_HISTORY_DIR + "/" + e + ".yaml")));
     }
 
-    /**
-     * Histories for several environments in ONE synced read, instead of one {@link #read} per env.
-     * Returns env -&gt; ordered history (absent/empty files map to an empty list). Lets callers that
-     * need the whole pipeline's histories at once (e.g. promotion options) avoid re-opening and
-     * re-syncing the clone per environment.
-     */
     public Map<String, List<String>> readEnvironmentHistories(List<String> envs) {
         List<String> validated = new ArrayList<>();
         for (String env : envs) {
@@ -257,7 +214,6 @@ public class GitStateService {
         });
     }
 
-    /** Overwrite the ordered history for maintenance/admin cleanup paths. Deployments append only. */
     public void setEnvironmentHistory(String env, List<String> versions) {
         String e = validateId("environment", env);
         List<String> validated = new ArrayList<>();
@@ -268,7 +224,6 @@ public class GitStateService {
                 writeFile(new File(repo, ENV_HISTORY_DIR + "/" + e + ".yaml"), dumpYaml().dump(validated)));
     }
 
-    // ===================== EVENT LOG =====================
 
     /** Append-only human-facing event log for the Deployment History UI. */
     public List<Map<String, Object>> readHistory() {
@@ -290,7 +245,6 @@ public class GitStateService {
                 writeFile(new File(repo, HISTORY_FILE), dumpYaml().dump(new ArrayList<>())));
     }
 
-    // ===================== GIT MECHANICS =====================
 
     private <T> T read(Function<File, T> reader) {
         synchronized (GitSupport.REMOTE_LOCK) {
@@ -303,11 +257,6 @@ public class GitStateService {
         }
     }
 
-    /**
-     * Apply a mutation, commit, and push — retrying on a non-fast-forward rejection. The retry
-     * re-syncs to the (now advanced) remote and RE-APPLIES the mutator, so an append/overwrite
-     * lands on top of the latest state instead of being silently lost.
-     */
     private void mutate(String message, Consumer<File> mutator) {
         synchronized (GitSupport.REMOTE_LOCK) {
             try (Git git = openOrClone()) {
@@ -361,24 +310,12 @@ public class GitStateService {
                 .call();
     }
 
-    /**
-     * Sync the working clone to the remote branch only if the cached state is older than the TTL.
-     * Within the TTL window this is a no-op (no network), which is what removes the per-read GitHub
-     * fetch. A brand-new service (lastSyncedAtMillis = 0) is always stale on its first read, so a
-     * restart re-syncs immediately and Git stays authoritative.
-     */
     private void syncIfStale(Git git) throws Exception {
         if (nowMillis() - lastSyncedAtMillis > stateCacheTtlMillis) {
             syncToRemote(git);
         }
     }
 
-    /**
-     * Hard-sync the working clone to the remote branch so reads/writes start from truth, then
-     * clean any untracked leftovers under BASE (e.g. a file written by a mutate that failed
-     * before commit) so they can't be re-staged into a later unrelated commit. Refreshes the
-     * freshness window so immediately-following reads don't re-fetch.
-     */
     private void syncToRemote(Git git) throws Exception {
         git.fetch().setCredentialsProvider(creds()).call();
         git.reset().setMode(ResetCommand.ResetType.HARD).setRef("origin/" + branch).call();
@@ -419,7 +356,6 @@ public class GitStateService {
         return trimmed;
     }
 
-    // ===================== YAML <-> MODEL =====================
 
     /** recipeData shape, cluster-agnostic (no target_cluster/values_file — those are per-deploy). */
     private String serializeVersion(HelmRelease release) {
@@ -440,7 +376,6 @@ public class GitStateService {
         return RecipeDataMapper.fromRecipeData(rd, versionId);
     }
 
-    // ===================== FILE / YAML HELPERS =====================
 
     private Yaml dumpYaml() {
         DumperOptions o = new DumperOptions();
@@ -449,12 +384,6 @@ public class GitStateService {
         return new Yaml(o);
     }
 
-    /**
-     * Loader whose resolver registers no implicit type rules, so every plain scalar stays a
-     * String. This preserves version-like values ("3.50", "1.0", "0.16") that a hand-edited
-     * file may leave unquoted, instead of coercing them to Double/Integer and losing precision.
-     * Uses SafeConstructor for good measure.
-     */
     private Yaml loadYaml() {
         LoaderOptions loaderOptions = new LoaderOptions();
         DumperOptions dumperOptions = new DumperOptions();

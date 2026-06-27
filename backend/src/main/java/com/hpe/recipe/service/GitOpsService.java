@@ -39,10 +39,6 @@ public class GitOpsService {
     @Value("${gitops.values-dir}")
     private String valuesDir;
 
-    /**
-     * Generate a Helm values YAML file from a HelmRelease and push it to GitHub.
-     * Also updates Chart.yaml version so Jenkins picks up the right version.
-     */
     public void generateAndPush(HelmRelease release) throws Exception {
         synchronized (GitSupport.REMOTE_LOCK) {
 
@@ -121,19 +117,6 @@ public class GitOpsService {
         return new UsernamePasswordCredentialsProvider(username, token);
     }
 
-    /**
-     * Generate YAML matching the existing values-v*.yaml format:
-     *
-     * recipeData:
-     *   chartVersion: "0.0.4"
-     *   recipes:
-     *     - version: "1.6.0"
-     *       description: "..."
-     *       components:
-     *         spark: "3.5.0"
-    *       upgrade_to:
-     *         - "1.5.0"
-     */
     public String resolveValuesFileName(HelmRelease release) {
         if (release.getValuesFileName() != null && !release.getValuesFileName().isBlank()) {
             String custom = release.getValuesFileName().trim().replace("\\", "/");
