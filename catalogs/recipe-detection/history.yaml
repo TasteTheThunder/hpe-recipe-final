@@ -89,3 +89,8 @@
   version: 2.1.2
   env: prod
   fromVersion: integration
+- timestamp: '2026-06-27T13:19:50.057412892Z'
+  action: rollback
+  version: 2.1.1
+  env: prod
+  fromVersion: 2.1.2
