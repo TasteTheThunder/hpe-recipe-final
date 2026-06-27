@@ -69,3 +69,18 @@
   version: 2.1.2
   env: integration
   fromVersion: qa
+- timestamp: '2026-06-26T09:24:53.035617294Z'
+  action: promote
+  version: 2.1.2
+  env: prod
+  fromVersion: integration
+- timestamp: '2026-06-26T09:25:46.382157191Z'
+  action: rollback
+  version: 2.1.1
+  env: prod
+  fromVersion: 2.1.2
+- timestamp: '2026-06-27T13:15:24.620192165Z'
+  action: promote
+  version: 2.1.3
+  env: qa
+  fromVersion: dev
