@@ -214,6 +214,7 @@ For deployment workflows:
 - Jenkins with access to this repository
 - Helm
 - kubectl
+- Minikube with Docker driver
 - Kubernetes contexts named `dev`, `qa`, `integration`, and `prod`
 - GitHub token with permission to push to the configured repository
 - Jenkins API token for triggering builds
@@ -246,9 +247,52 @@ Key environment variables:
 
 ## Run Locally
 
-### 1. Start the backend
+### 1. Prepare local Kubernetes environments
 
-Linux/macOS:
+Start Minikube and create one namespace/context per pipeline environment:
+
+```bash
+minikube start --driver=docker --cpus=4 --memory=4096
+
+kubectl create namespace dev
+kubectl create namespace qa
+kubectl create namespace integration
+kubectl create namespace prod
+
+kubectl config set-context dev         --cluster=minikube --user=minikube --namespace=dev
+kubectl config set-context qa          --cluster=minikube --user=minikube --namespace=qa
+kubectl config set-context integration --cluster=minikube --user=minikube --namespace=integration
+kubectl config set-context prod        --cluster=minikube --user=minikube --namespace=prod
+```
+
+Verify the contexts:
+
+```bash
+kubectl config get-contexts
+kubectl --context=dev get nodes
+kubectl --context=qa get nodes
+kubectl --context=integration get nodes
+kubectl --context=prod get nodes
+```
+
+### 2. Configure Jenkins
+
+Create a Jenkins Pipeline job using the repository `Jenkinsfile`.
+
+Required Jenkins setup:
+
+- Jenkins must be able to clone this repository.
+- Jenkins must have `helm`, `kubectl`, and access to the Minikube contexts:
+  `dev`, `qa`, `integration`, and `prod`.
+- The Jenkins job name should match `JENKINS_JOB` in the backend environment
+  variables. The default is `hpe-recipe-final`.
+- The backend callback URL in `Jenkinsfile` is `http://localhost:8081/api`.
+  If Jenkins runs somewhere that cannot reach backend on localhost, update
+  `API_URL` in `Jenkinsfile` or expose the backend URL accordingly.
+
+### 3. Start the backend
+
+Set the required GitHub and Jenkins credentials, then start Spring Boot:
 
 ```bash
 export GIT_USERNAME="<github-username>"
@@ -268,7 +312,7 @@ Backend health check:
 curl http://localhost:8081/api/actuator/health
 ```
 
-### 2. Start the frontend
+### 4. Start the frontend
 
 ```bash
 cd frontend
