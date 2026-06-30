@@ -178,6 +178,28 @@ Helm deployment succeeded.
 9. UI refreshes from Git-backed state.
 ```
 
+If Helm fails, Jenkins sends `status=failed` and Git environment state is not
+updated.
+
+If Jenkins never calls the backend after a successful Helm deployment, Git will
+continue to show the old current environment version.
+
+## Rollback Semantics
+
+Rollback uses `environment-history/<env>.yaml` as a deployment timeline.
+
+It targets the immediately previous successful deployment entry:
+
+```yaml
+- 2.1.0
+- 2.1.1
+- 2.1.2
+- 2.1.1
+- 2.2.0
+```
+If `2.2.0` is current, rollback targets `2.1.1`.
+
+
 ## Prerequisites
 
 For local development:
