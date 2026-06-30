@@ -178,44 +178,6 @@ Helm deployment succeeded.
 9. UI refreshes from Git-backed state.
 ```
 
-If Helm fails, Jenkins sends `status=failed` and Git environment state is not
-updated.
-
-If Jenkins never calls the backend after a successful Helm deployment, Git will
-continue to show the old current environment version. There is currently no
-timeout or cluster reconciliation job in this repository.
-
-## Rollback Semantics
-
-Rollback uses `environment-history/<env>.yaml` as a deployment timeline.
-
-It targets the immediately previous successful deployment entry:
-
-```yaml
-- 2.1.0
-- 2.1.1
-- 2.1.2
-- 2.1.1
-- 2.2.0
-```
-
-If `2.2.0` is current, rollback targets `2.1.1`.
-
-After the rollback succeeds, history becomes:
-
-```yaml
-- 2.1.0
-- 2.1.1
-- 2.1.2
-- 2.1.1
-- 2.2.0
-- 2.1.1
-```
-
-A second rollback would target `2.2.0`, because rollback behaves like undoing
-the last successful deployment event. It does not walk backward by semantic
-version number.
-
 ## Prerequisites
 
 For local development:
@@ -267,8 +229,6 @@ For PowerShell users, copy the example file and fill in real secrets:
 Copy-Item scripts/setup-env.example.ps1 scripts/setup-env.ps1
 notepad scripts/setup-env.ps1
 ```
-
-Do not commit real credentials.
 
 ## Run Locally
 
@@ -480,5 +440,4 @@ Rollback is not shown:
 
 ## License
 
-This repository is intended for internal HPE recipe detection and catalog
-management workflows. Add the project license here if one is required.
+This project was developed for Hewlett Packard Enterprise (HPE) as part of an internal project. Licensing and usage rights are subject to HPE policies.
