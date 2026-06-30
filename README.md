@@ -103,7 +103,6 @@ Main components:
 |       +-- graph/                   Graph layout/build helpers
 +-- helm/recipe-detection-chart/     Helm chart and generated values files
 +-- catalogs/recipe-detection/       Git-backed catalog platform state
-+-- scripts/                         Windows PowerShell helper scripts
 +-- Jenkinsfile                      Jenkins Helm deploy pipeline
 +-- Dockerfile                       Backend container build
 ```
@@ -245,13 +244,6 @@ Key environment variables:
 | `JENKINS_TOKEN` | Jenkins API token | empty |
 | `GITOPS_STATE_CACHE_TTL_SECONDS` | Git state read cache TTL | `8` |
 
-For PowerShell users, copy the example file and fill in real secrets:
-
-```powershell
-Copy-Item scripts/setup-env.example.ps1 scripts/setup-env.ps1
-notepad scripts/setup-env.ps1
-```
-
 ## Run Locally
 
 ### 1. Start the backend
@@ -268,14 +260,6 @@ export JENKINS_JOB="hpe-recipe-final"
 
 cd backend
 mvn spring-boot:run
-```
-
-Windows PowerShell:
-
-```powershell
-Copy-Item scripts/setup-env.example.ps1 scripts/setup-env.ps1
-# edit scripts/setup-env.ps1 with real credentials
-.\scripts\start-backend.ps1
 ```
 
 Backend health check:
@@ -299,12 +283,6 @@ http://localhost:3000
 ```
 
 The Vite dev server proxies `/api` requests to `http://localhost:8081`.
-
-Windows PowerShell all-in-one helper:
-
-```powershell
-.\scripts\start-dev.ps1
-```
 
 ## Build and Test
 

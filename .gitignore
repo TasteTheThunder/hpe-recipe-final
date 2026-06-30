@@ -45,9 +45,6 @@ Thumbs.db
 helm/**/*.tgz
 
 
-# Local secrets (copy from setup-env.example.ps1)
-scripts/setup-env.ps1
-
 #custom 
 README_GITHUB_SETUP.md
 SETUP.md
