@@ -104,3 +104,8 @@
   version: 2.1.1
   env: prod
   fromVersion: 2.1.2
+- timestamp: '2026-07-02T11:31:20.776367454Z'
+  action: promote
+  version: 2.1.2
+  env: prod
+  fromVersion: integration
