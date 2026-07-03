@@ -129,3 +129,8 @@
   version: 2.1.4
   env: qa
   fromVersion: dev
+- timestamp: '2026-07-03T03:40:27.498088643Z'
+  action: rollback
+  version: 2.1.3
+  env: qa
+  fromVersion: 2.1.4
