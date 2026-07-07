@@ -199,3 +199,8 @@
   version: 2.1.6
   env: integration
   fromVersion: qa
+- timestamp: '2026-07-07T10:35:36.732574510Z'
+  action: rollback
+  version: 2.1.5
+  env: integration
+  fromVersion: 2.1.6
