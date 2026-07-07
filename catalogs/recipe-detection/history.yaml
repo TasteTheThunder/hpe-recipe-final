@@ -204,3 +204,8 @@
   version: 2.1.5
   env: integration
   fromVersion: 2.1.6
+- timestamp: '2026-07-07T10:46:02.148241238Z'
+  action: edit
+  version: 2.1.7
+  env: dev
+  fromVersion: 2.1.6
