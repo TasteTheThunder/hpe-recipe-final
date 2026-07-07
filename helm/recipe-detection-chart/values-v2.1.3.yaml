@@ -1,6 +1,6 @@
 recipeData:
   chartVersion: 2.1.3
-  target_cluster: integration
+  target_cluster: qa
   catalog_name: HPE Analytics Runtime
   catalog_description: Enterprise analytics and real-time data processing platform
     for large-scale workloads.
