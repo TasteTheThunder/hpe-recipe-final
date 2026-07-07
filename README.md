@@ -18,6 +18,7 @@ deployment.
 
 ## Contents
 
+- [Tech Stack](#tech-stack)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Repository Layout](#repository-layout)
@@ -31,6 +32,15 @@ deployment.
 - [Jenkins and Helm Deployment](#jenkins-and-helm-deployment)
 - [API Overview](#api-overview)
 - [Troubleshooting](#troubleshooting)
+
+## Tech Stack
+
+- Frontend: React 18, Vite, React Router, React Flow, JavaScript
+- Backend: Java 17, Spring Boot 3.2.5, Spring Web, Spring WebSocket, Spring Actuator
+- GitOps / State Management: GitHub, JGit, YAML catalog/state files
+- Deployment: Jenkins, Helm, Kubernetes, kubectl
+- Local Kubernetes: Minikube with Docker driver
+- Kubernetes Client: Fabric8 Kubernetes Client
 
 ## Features
 
